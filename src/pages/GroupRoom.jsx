@@ -3,12 +3,12 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { supabase } from '../lib/supabase';
 import {
-  Users, Plus, TrendingDown, Trash2, X, ArrowLeft,
-  UserPlus, Copy, Check, Share2, Link2, DollarSign, Settings2, Edit2, LogOut
+  Users, Plus, Trash2, X, ArrowLeft,
+  UserPlus, Copy, Check, Share2, Link2, DollarSign, Settings2, Edit2, LogOut, TrendingDown
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import EmptyState from '../components/EmptyState';
-import { calculateSettlements } from '../lib/financeUtils';
+
 
 import { EXPENSE_CATEGORIES as CATEGORIES } from '../lib/categories';
 
@@ -30,7 +30,7 @@ export default function GroupRoom() {
   const [memberProfiles, setMemberProfiles] = useState({});
   const [loading, setLoading]           = useState(true);
   const [isMember, setIsMember]         = useState(false);
-  const [settlementData, setSettlementData] = useState(null);
+
 
   // Add-expense modal
   const [showModal, setShowModal]       = useState(false);
@@ -47,6 +47,11 @@ export default function GroupRoom() {
 
   // Group Settings
   const [showSettings, setShowSettings] = useState(false);
+
+  // Reporting stats
+  const [dailyStats, setDailyStats] = useState({ total: 0, breakdown: {} });
+  const [monthlyStats, setMonthlyStats] = useState({ total: 0, breakdown: {} });
+
   const [editGroupInfo, setEditGroupInfo] = useState(false);
   const [editName, setEditName] = useState('');
   const [editDesc, setEditDesc] = useState('');
@@ -58,49 +63,86 @@ export default function GroupRoom() {
   const [copied, setCopied]                 = useState(false);
   const [existingInvites, setExistingInvites] = useState([]);
 
+  // ── Reporting Logic Function ──────────────────────────────
+  const calculateReports = (expensesList) => {
+    const today = new Date().toISOString().split('T')[0];
+    const thisMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
+
+    const daily = { total: 0, breakdown: {} };
+    const monthly = { total: 0, breakdown: {} };
+
+    expensesList.forEach(e => {
+      if (!e) return;
+      
+      const amt = parseFloat(e.amount) || 0;
+      const eDate = e.date || '';
+      const eMonth = eDate.slice(0, 7);
+      const userId = e.added_by;
+
+      if (!userId || amt <= 0) return;
+
+      // Monthly Report
+      if (eMonth === thisMonth) {
+        monthly.total += amt;
+        monthly.breakdown[userId] = (monthly.breakdown[userId] || 0) + amt;
+      }
+
+      // Daily Report
+      if (eDate === today) {
+        daily.total += amt;
+        daily.breakdown[userId] = (daily.breakdown[userId] || 0) + amt;
+      }
+    });
+
+    return { daily, monthly };
+  };
+
   // ── Load group data ───────────────────────────────────────
   const fetchGroupData = useCallback(async () => {
     if (!user || !groupId) return;
     setLoading(true);
 
-    const { data: g } = await supabase.from('groups').select('*').eq('id', groupId).single();
-    if (!g) { navigate('/'); return; }
-    setGroup(g);
+    try {
+      const { data: g } = await supabase.from('groups').select('*').eq('id', groupId).single();
+      if (!g) { navigate('/'); return; }
+      setGroup(g);
 
-    const { data: membership } = await supabase
-      .from('group_members').select('id')
-      .eq('group_id', groupId).eq('user_id', user.id).single();
-    setIsMember(!!membership);
+      const { data: membership } = await supabase
+        .from('group_members').select('id')
+        .eq('group_id', groupId).eq('user_id', user.id).single();
+      setIsMember(!!membership);
 
-    const { data: mems } = await supabase
-      .from('group_members').select('*').eq('group_id', groupId);
-    setMembers(mems || []);
+      const { data: mems } = await supabase
+        .from('group_members').select('*').eq('group_id', groupId);
+      setMembers(mems || []);
 
-    if (mems?.length > 0) {
-      const ids = mems.map(m => m.user_id);
-      const { data: profiles } = await supabase.from('profiles').select('id, full_name, email').in('id', ids);
-      const map = {};
-      profiles?.forEach(p => { 
-        map[p.id] = p.full_name || p.email?.split('@')[0] || 'Member'; 
-      });
-      setMemberProfiles(map);
+      if (mems?.length > 0) {
+        const ids = mems.map(m => m.user_id);
+        const { data: profiles } = await supabase.from('profiles').select('id, full_name, email').in('id', ids);
+        const map = {};
+        profiles?.forEach(p => { 
+          map[p.id] = p.full_name || p.email?.split('@')[0] || 'Member'; 
+        });
+        setMemberProfiles(map);
+      }
+
+      const { data: exp } = await supabase
+        .from('group_expenses').select('*')
+        .eq('group_id', groupId).order('date', { ascending: false });
+      const expensesList = exp || [];
+      setExpenses(expensesList);
+
+      // Calculate and set reporting stats
+      const { daily, monthly } = calculateReports(expensesList);
+      setDailyStats(daily);
+      setMonthlyStats(monthly);
+
+    } catch (err) {
+      console.error('Error fetching group data:', err);
+      toast.error('Failed to load group data');
+    } finally {
+      setLoading(false);
     }
-
-    const { data: exp } = await supabase
-      .from('group_expenses').select('*')
-      .eq('group_id', groupId).order('date', { ascending: false });
-    const expensesList = exp || [];
-    setExpenses(expensesList);
-
-    // Calculate settlements
-    if (mems && expensesList.length > 0) {
-      const settle = calculateSettlements(mems, expensesList);
-      setSettlementData(settle);
-    } else {
-      setSettlementData(null);
-    }
-
-    setLoading(false);
   }, [user, groupId, navigate]);
 
   useEffect(() => { fetchGroupData(); }, [fetchGroupData]);
@@ -274,16 +316,19 @@ export default function GroupRoom() {
       toast.success('Member removed');
       setMembers(prev => prev.filter(m => m.user_id !== memberUserId));
       
-      // Cleanup any split expenses related to this member if needed, 
-      // but usually the DB schema or foreign keys should handle or leave them as is.
     } catch (err) {
       toast.error(err.message);
     }
   };
 
-  const fmt = (n) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n);
-  const myTotal    = expenses.filter(e => e.added_by === user?.id).reduce((s, e) => s + parseFloat(e.amount), 0);
-  const groupTotal = expenses.reduce((s, e) => s + parseFloat(e.amount), 0);
+  const fmt = (n) => {
+    if (isNaN(n) || n === null || n === undefined) return '₹0';
+    return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n);
+  };
+
+  // Derived totals with robustness
+  const myTotal    = expenses.filter(e => e && e.added_by === user?.id).reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+  const groupTotal = expenses.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
 
   if (loading) return (
     <div className="flex justify-center items-center h-64">
@@ -336,56 +381,72 @@ export default function GroupRoom() {
 
       {/* ── Summary cards ──────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-3 animate-slide-up" style={{ animationDelay: '0.1s' }}>
-        <div className="glass p-4 rounded-2xl">
+        <div className="glass p-4 rounded-2xl bg-white/[0.02]">
           <p className="text-[10px] text-muted uppercase tracking-wider">Group Total</p>
-          <p className="text-xl font-bold mt-1">{fmt(groupTotal)}</p>
+          <p className="text-xl font-bold mt-1 text-primary">{fmt(groupTotal)}</p>
           <p className="text-xs text-muted mt-0.5">{expenses.length} expense{expenses.length !== 1 ? 's' : ''}</p>
         </div>
-        <div className="glass p-4 rounded-2xl">
-          <p className="text-[10px] text-muted uppercase tracking-wider">My Status</p>
-          {settlementData ? (
-            <>
-              <p className={`text-xl font-bold mt-1 ${settlementData.balances[user.id] >= 0 ? 'text-primary' : 'text-red-400'}`}>
-                {fmt(Math.abs(settlementData.balances[user.id] || 0))}
-              </p>
-              <p className="text-xs text-muted mt-0.5">
-                {settlementData.balances[user.id] >= 0 ? 'You are owed' : 'You owe money'}
-              </p>
-            </>
-          ) : (
-            <>
-              <p className="text-xl font-bold mt-1 text-primary">{fmt(myTotal)}</p>
-              <p className="text-xs text-muted mt-0.5">My contribution</p>
-            </>
-          )}
+        <div className="glass p-4 rounded-2xl bg-white/[0.02]">
+          <p className="text-[10px] text-muted uppercase tracking-wider">My Spending</p>
+          <p className="text-xl font-bold mt-1 text-primary">{fmt(myTotal)}</p>
+          <p className="text-xs text-muted mt-0.5">Total contribution</p>
         </div>
       </div>
 
-      {/* ── Settlement breakdown ────────────────────────────── */}
-      {settlementData && settlementData.settlements.length > 0 && (
-        <div className="glass p-4 rounded-2xl bg-white/[0.02] animate-slide-up" style={{ animationDelay: '0.2s' }}>
-          <div className="flex justify-between items-center mb-3">
-            <h3 className="text-[10px] font-bold text-muted uppercase tracking-wider">Settlement Plan</h3>
-            <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-bold">OPTIMIZED</span>
+      {/* ── Reporting Dashboard ────────────────────────────── */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-slide-up" style={{ animationDelay: '0.2s' }}>
+        {/* Daily Report */}
+        <div className="glass p-5 rounded-3xl bg-white/[0.02] border border-white/5">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-xs font-bold text-muted uppercase tracking-wider">Daily Report</h3>
+            <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-bold">TODAY</span>
           </div>
-          <div className="space-y-2">
-            {settlementData.settlements.map((s, idx) => (
-              <div key={idx} className="flex items-center justify-between text-xs py-1 border-b border-white/5 last:border-0">
-                <div className="flex items-center gap-2">
-                  <span className={s.from === user.id ? 'text-red-400 font-bold' : ''}>
-                    {s.from === user.id ? 'You' : (memberProfiles[s.from] || 'Member')}
-                  </span>
-                  <span className="text-muted text-[10px]">owes</span>
-                  <span className={s.to === user.id ? 'text-primary font-bold' : ''}>
-                    {s.to === user.id ? 'You' : (memberProfiles[s.to] || 'Member')}
-                  </span>
-                </div>
-                <span className="font-bold">{fmt(s.amount)}</span>
-              </div>
-            ))}
+          <div className="space-y-4">
+            <div className="flex items-baseline gap-2">
+              <span className="text-2xl font-bold">{fmt(dailyStats.total)}</span>
+              <span className="text-xs text-muted">total today</span>
+            </div>
+            <div className="space-y-2">
+              {Object.entries(dailyStats.breakdown).length > 0 ? (
+                Object.entries(dailyStats.breakdown).map(([uid, amt]) => (
+                  <div key={uid} className="flex justify-between items-center text-sm">
+                    <span className="text-muted">{uid === user.id ? 'You' : (memberProfiles[uid] || 'Member')}</span>
+                    <span className="font-medium">{fmt(amt)}</span>
+                  </div>
+                ))
+              ) : (
+                <p className="text-xs text-muted italic">No expenses recorded today</p>
+              )}
+            </div>
           </div>
         </div>
-      )}
+
+        {/* Monthly Report */}
+        <div className="glass p-5 rounded-3xl bg-white/[0.02] border border-white/5">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-xs font-bold text-muted uppercase tracking-wider">Monthly Report</h3>
+            <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-bold">THIS MONTH</span>
+          </div>
+          <div className="space-y-4">
+            <div className="flex items-baseline gap-2">
+              <span className="text-2xl font-bold">{fmt(monthlyStats.total)}</span>
+              <span className="text-xs text-muted">total this month</span>
+            </div>
+            <div className="space-y-2">
+              {Object.entries(monthlyStats.breakdown).length > 0 ? (
+                Object.entries(monthlyStats.breakdown).map(([uid, amt]) => (
+                  <div key={uid} className="flex justify-between items-center text-sm">
+                    <span className="text-muted">{uid === user.id ? 'You' : (memberProfiles[uid] || 'Member')}</span>
+                    <span className="font-medium">{fmt(amt)}</span>
+                  </div>
+                ))
+              ) : (
+                <p className="text-xs text-muted italic">No expenses this month</p>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
 
       {/* ── Expenses list ──────────────────────────────────── */}
       <div className="glass rounded-2xl overflow-hidden animate-slide-up" style={{ animationDelay: '0.3s' }}>
@@ -403,6 +464,7 @@ export default function GroupRoom() {
         ) : (
           <div className="divide-y divide-white/5">
             {expenses.map(exp => {
+              if (!exp) return null;
               const isOwn = exp.added_by === user?.id;
               return (
                 <div key={exp.id} className="flex items-center gap-3 px-5 py-3.5 hover:bg-white/5 transition-colors group">
@@ -417,7 +479,7 @@ export default function GroupRoom() {
                       </span>
                     </div>
                     <p className="text-xs text-muted">
-                      {exp.category} · {new Date(exp.date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })}
+                      {exp.category} · {new Date(exp.date || Date.now()).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })}
                       {exp.is_split && (
                         <span className="ml-2 px-1.5 py-0.5 bg-white/5 text-muted rounded text-[10px] font-medium">
                           Split among {exp.split_members?.length || members.length}
@@ -444,14 +506,10 @@ export default function GroupRoom() {
         )}
       </div>
 
-      {/* ════════════════════════════════════════════════════
-          INVITE PANEL MODAL
-      ════════════════════════════════════════════════════ */}
+      {/* ── Invite Modal ── */}
       {showInvite && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
           <div className="glass w-full max-w-md rounded-2xl shadow-2xl overflow-hidden animate-fade-in">
-
-            {/* Header */}
             <div className="flex justify-between items-center p-5 border-b border-white/10">
               <div>
                 <h2 className="text-lg font-bold">Invite to Group</h2>
@@ -461,10 +519,7 @@ export default function GroupRoom() {
                 <X size={18} />
               </button>
             </div>
-
             <div className="p-5 space-y-5">
-
-              {/* Generate button */}
               {!inviteLink ? (
                 <button
                   onClick={generateInviteLink}
@@ -476,94 +531,35 @@ export default function GroupRoom() {
                 </button>
               ) : (
                 <div className="space-y-3">
-                  {/* Link box */}
                   <div className="flex items-center gap-2 bg-surface/60 border border-white/10 rounded-xl px-4 py-3">
                     <span className="flex-1 text-xs text-muted truncate">{inviteLink}</span>
-                    <button
-                      onClick={() => copyLink(inviteLink)}
-                      className="p-1.5 rounded-lg bg-background hover:bg-primary/20 text-muted hover:text-primary transition-colors flex-shrink-0"
-                    >
+                    <button onClick={() => copyLink(inviteLink)} className="p-1.5 rounded-lg bg-background hover:bg-primary/20 text-muted hover:text-primary transition-colors flex-shrink-0">
                       {copied ? <Check size={15} className="text-emerald-400" /> : <Copy size={15} />}
                     </button>
                   </div>
-
-                  {/* Share buttons */}
                   <div className="grid grid-cols-3 gap-2">
-                    {/* WhatsApp */}
-                    <button
-                      onClick={() => shareWhatsApp(inviteLink)}
-                      className="flex flex-col items-center gap-1.5 py-3 px-2 rounded-xl bg-[#25d366]/10 text-[#25d366] hover:bg-[#25d366]/20 transition-colors font-medium text-xs"
-                    >
-                      <WhatsAppIcon />
-                      WhatsApp
+                    <button onClick={() => shareWhatsApp(inviteLink)} className="flex flex-col items-center gap-1.5 py-3 px-2 rounded-xl bg-[#25d366]/10 text-[#25d366] hover:bg-[#25d366]/20 transition-colors font-medium text-xs">
+                      <WhatsAppIcon /> WhatsApp
                     </button>
-
-                    {/* Copy */}
-                    <button
-                      onClick={() => copyLink(inviteLink)}
-                      className="flex flex-col items-center gap-1.5 py-3 px-2 rounded-xl bg-surface hover:bg-white/10 transition-colors text-muted text-xs font-medium"
-                    >
+                    <button onClick={() => copyLink(inviteLink)} className="flex flex-col items-center gap-1.5 py-3 px-2 rounded-xl bg-surface hover:bg-white/10 transition-colors text-muted text-xs font-medium">
                       {copied ? <Check size={16} className="text-emerald-400" /> : <Copy size={16} />}
                       {copied ? 'Copied!' : 'Copy Link'}
                     </button>
-
-                    {/* Native Share */}
-                    <button
-                      onClick={() => shareNative(inviteLink)}
-                      className="flex flex-col items-center gap-1.5 py-3 px-2 rounded-xl bg-surface hover:bg-white/10 transition-colors text-muted text-xs font-medium"
-                    >
-                      <Share2 size={16} />
-                      More
+                    <button onClick={() => shareNative(inviteLink)} className="flex flex-col items-center gap-1.5 py-3 px-2 rounded-xl bg-surface hover:bg-white/10 transition-colors text-muted text-xs font-medium">
+                      <Share2 size={16} /> More
                     </button>
                   </div>
-
-                  <p className="text-center text-xs text-muted">
-                    This link is valid until someone accepts it.<br />
-                    New users will sign up and auto-join this group.
-                  </p>
-
-                  <button
-                    onClick={generateInviteLink}
-                    disabled={inviteLoading}
-                    className="w-full py-2.5 rounded-xl border border-white/10 text-sm text-muted hover:bg-surface transition-colors"
-                  >
+                  <button onClick={generateInviteLink} disabled={inviteLoading} className="w-full py-2.5 rounded-xl border border-white/10 text-sm text-muted hover:bg-surface transition-colors">
                     Generate Another Link
                   </button>
                 </div>
               )}
-
-              {/* Recent pending invites */}
-              {existingInvites.length > 0 && (
-                <div className="border-t border-white/10 pt-4">
-                  <p className="text-xs text-muted font-semibold uppercase tracking-wider mb-2">Recent Pending Links</p>
-                  <div className="space-y-2">
-                    {existingInvites.map(inv => {
-                      const link = `${window.location.origin}/invite?token=${inv.token}`;
-                      return (
-                        <div key={inv.id} className="flex items-center gap-2 bg-surface/50 rounded-xl px-3 py-2">
-                          <Link2 size={13} className="text-muted flex-shrink-0" />
-                          <span className="text-xs text-muted flex-1 truncate">{link}</span>
-                          <button onClick={() => shareWhatsApp(link)} className="p-1.5 text-[#25d366] hover:bg-[#25d366]/10 rounded-lg flex-shrink-0 transition-colors">
-                            <WhatsAppIcon />
-                          </button>
-                          <button onClick={() => copyLink(link)} className="p-1.5 text-muted hover:text-primary hover:bg-primary/10 rounded-lg flex-shrink-0 transition-colors">
-                            <Copy size={13} />
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
             </div>
           </div>
         </div>
       )}
 
-      {/* ════════════════════════════════════════════════════
-          ADD EXPENSE MODAL
-      ════════════════════════════════════════════════════ */}
+      {/* ── Add Expense Modal ── */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
           <div className="glass w-full max-w-md rounded-2xl shadow-2xl overflow-hidden animate-fade-in">
@@ -574,7 +570,6 @@ export default function GroupRoom() {
               </button>
             </div>
             <form onSubmit={handleAddExpense} className="p-5 space-y-4">
-
               <div>
                 <label className="block text-sm font-medium text-muted mb-1.5">Amount *</label>
                 <div className="relative">
@@ -586,15 +581,13 @@ export default function GroupRoom() {
                   />
                 </div>
               </div>
-              {category !== 'Other' && (
-                <div>
-                  <label className="block text-sm font-medium text-muted mb-1.5">Description</label>
-                  <input type="text" value={description} onChange={e => setDescription(e.target.value)}
-                    className="w-full bg-surface border border-white/10 rounded-xl px-4 py-3 text-text focus:outline-none focus:ring-2 focus:ring-primary/50"
-                    placeholder="e.g. Electricity bill"
-                  />
-                </div>
-              )}
+              <div>
+                <label className="block text-sm font-medium text-muted mb-1.5">Description</label>
+                <input type="text" value={description} onChange={e => setDescription(e.target.value)}
+                  className="w-full bg-surface border border-white/10 rounded-xl px-4 py-3 text-text focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  placeholder="e.g. Lunch at office"
+                />
+              </div>
               <div>
                 <label className="block text-sm font-medium text-muted mb-1.5">Category</label>
                 <select value={category} onChange={e => setCategory(e.target.value)}
@@ -602,18 +595,6 @@ export default function GroupRoom() {
                 >
                   {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
-
-                {/* Show purpose text box only when 'Other' is selected */}
-                {category === 'Other' && (
-                  <input
-                    type="text"
-                    value={description}
-                    onChange={e => setDescription(e.target.value)}
-                    className="w-full bg-surface border border-white/10 rounded-xl px-4 py-3 text-text focus:outline-none focus:ring-2 focus:ring-primary/50 mt-2"
-                    placeholder="Specify other category… (optional)"
-                    maxLength={100}
-                  />
-                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-muted mb-1.5">Date</label>
@@ -622,7 +603,7 @@ export default function GroupRoom() {
                 />
               </div>
 
-              {/* Split Expense Option */}
+              {/* Split Option */}
               <div className="pt-2">
                 <label className="flex items-center gap-2 cursor-pointer group">
                   <div className="relative">
@@ -637,52 +618,31 @@ export default function GroupRoom() {
                   </div>
                   <span className="text-sm font-medium text-text">Split this expense</span>
                 </label>
-
                 {isSplit && (
-                  <div className="mt-3 space-y-2 animate-fade-in">
+                  <div className="mt-3 space-y-2">
                     <p className="text-[10px] text-muted uppercase tracking-wider font-bold">Split with:</p>
                     <div className="flex flex-wrap gap-2">
                       {members.map(m => {
                         const isSelected = selectedSplitMembers.includes(m.user_id);
                         return (
-                          <button
-                            key={m.user_id}
-                            type="button"
-                            onClick={() => {
-                              if (isSelected) {
-                                if (selectedSplitMembers.length > 1) {
-                                  setSelectedSplitMembers(prev => prev.filter(id => id !== m.user_id));
-                                } else {
-                                  toast.error("At least one person must be selected");
-                                }
-                              } else {
-                                setSelectedSplitMembers(prev => [...prev, m.user_id]);
-                              }
-                            }}
-                            className={`px-3 py-1.5 rounded-full text-[10px] font-bold transition-all ${
-                              isSelected 
-                                ? 'bg-primary text-white shadow-lg shadow-primary/20' 
-                                : 'bg-surface text-muted border border-white/5'
-                            }`}
-                          >
+                          <button key={m.user_id} type="button" onClick={() => {
+                            if (isSelected) {
+                              if (selectedSplitMembers.length > 1) setSelectedSplitMembers(prev => prev.filter(id => id !== m.user_id));
+                              else toast.error("Select at least one person");
+                            } else setSelectedSplitMembers(prev => [...prev, m.user_id]);
+                          }} className={`px-3 py-1.5 rounded-full text-[10px] font-bold transition-all ${isSelected ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'bg-surface text-muted border border-white/5'}`}>
                             {memberProfiles[m.user_id] || 'Member'}
                           </button>
                         );
                       })}
                     </div>
-                    <p className="text-[10px] text-muted italic mt-1">
-                      Each person pays: {fmt(parseFloat(amount || 0) / selectedSplitMembers.length)}
-                    </p>
                   </div>
                 )}
               </div>
+
               <div className="flex gap-3 pt-2">
-                <button type="button" onClick={() => setShowModal(false)}
-                  className="flex-1 py-3 rounded-xl border border-white/10 text-sm hover:bg-surface transition-colors">
-                  Cancel
-                </button>
-                <button type="submit" disabled={formLoading}
-                  className="flex-1 py-3 rounded-xl bg-primary text-white text-sm font-semibold hover:bg-emerald-400 disabled:opacity-50 transition-colors">
+                <button type="button" onClick={() => setShowModal(false)} className="flex-1 py-3 rounded-xl border border-white/10 text-sm hover:bg-surface transition-colors">Cancel</button>
+                <button type="submit" disabled={formLoading} className="flex-1 py-3 rounded-xl bg-primary text-white text-sm font-semibold hover:bg-emerald-400 disabled:opacity-50 transition-colors">
                   {formLoading ? 'Adding…' : 'Add Expense'}
                 </button>
               </div>
@@ -691,46 +651,23 @@ export default function GroupRoom() {
         </div>
       )}
 
-      {/* ── Settings Modal (WhatsApp Style) ────────────────── */}
+      {/* ── Settings Modal ── */}
       {showSettings && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 animate-fade-in">
           <div className="absolute inset-0 bg-background/80 backdrop-blur-sm" onClick={() => setShowSettings(false)} />
           <div className="relative w-full max-w-md bg-surface border border-white/10 rounded-t-3xl sm:rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
-            
-            {/* Header */}
             <div className="flex justify-between items-center px-6 py-4 border-b border-white/5 bg-white/5 shrink-0">
-              <h2 className="text-xl font-bold flex items-center gap-2">
-                <Settings2 className="text-primary" size={24} />
-                Group Info
-              </h2>
-              <button onClick={() => setShowSettings(false)} className="p-2 rounded-full hover:bg-white/10 text-muted transition-colors">
-                <X size={20} />
-              </button>
+              <h2 className="text-xl font-bold flex items-center gap-2"><Settings2 className="text-primary" size={24} /> Group Info</h2>
+              <button onClick={() => setShowSettings(false)} className="p-2 rounded-full hover:bg-white/10 text-muted transition-colors"><X size={20} /></button>
             </div>
-
-            {/* Scrollable Content */}
             <div className="overflow-y-auto p-6 space-y-6">
-              
-              {/* Info Section */}
               <div className="space-y-4">
                 <div className="flex justify-between items-start">
                   <div className="flex-1">
                     {editGroupInfo ? (
                       <form onSubmit={handleUpdateGroupInfo} className="space-y-3">
-                        <input
-                          type="text"
-                          required
-                          value={editName}
-                          onChange={e => setEditName(e.target.value)}
-                          className="w-full bg-background border border-white/10 rounded-xl px-4 py-2.5 text-text focus:ring-2 focus:ring-primary/50 text-xl font-bold"
-                          placeholder="Group Subject"
-                        />
-                        <textarea
-                          value={editDesc}
-                          onChange={e => setEditDesc(e.target.value)}
-                          className="w-full bg-background border border-white/10 rounded-xl px-4 py-2.5 text-text focus:ring-2 focus:ring-primary/50 text-sm min-h-[80px]"
-                          placeholder="Group Description"
-                        />
+                        <input type="text" required value={editName} onChange={e => setEditName(e.target.value)} className="w-full bg-background border border-white/10 rounded-xl px-4 py-2.5 text-text focus:ring-2 focus:ring-primary/50 text-xl font-bold" placeholder="Group Subject" />
+                        <textarea value={editDesc} onChange={e => setEditDesc(e.target.value)} className="w-full bg-background border border-white/10 rounded-xl px-4 py-2.5 text-text focus:ring-2 focus:ring-primary/50 text-sm min-h-[80px]" placeholder="Group Description" />
                         <div className="flex gap-2">
                           <button type="button" onClick={() => setEditGroupInfo(false)} className="flex-1 py-2 rounded-xl border border-white/10 text-sm hover:bg-white/5 transition-colors">Cancel</button>
                           <button type="submit" className="flex-1 py-2 rounded-xl bg-primary text-white text-sm font-semibold hover:bg-emerald-400 transition-colors">Save</button>
@@ -745,101 +682,46 @@ export default function GroupRoom() {
                     )}
                   </div>
                   {!editGroupInfo && group?.created_by === user?.id && (
-                    <button 
-                      onClick={() => {
-                        setEditName(group?.name || '');
-                        setEditDesc(group?.description || '');
-                        setEditGroupInfo(true);
-                      }}
-                      className="p-2 bg-primary/10 text-primary rounded-xl hover:bg-primary/20 transition-colors"
-                      title="Edit Group Info"
-                    >
-                      <Edit2 size={16} />
-                    </button>
+                    <button onClick={() => { setEditName(group?.name || ''); setEditDesc(group?.description || ''); setEditGroupInfo(true); }} className="p-2 bg-primary/10 text-primary rounded-xl hover:bg-primary/20 transition-colors"><Edit2 size={16} /></button>
                   )}
                 </div>
               </div>
-
               <div className="h-px bg-white/5 w-full" />
-
-              {/* Members List */}
               <div className="space-y-3">
-                <div className="flex justify-between items-center mb-2">
-                  <h4 className="text-sm font-bold text-muted uppercase tracking-wider">{members.length} Participants</h4>
-                </div>
-                
-                {/* Invite Button inline here like WhatsApp */}
-                <button 
-                  onClick={() => { setShowSettings(false); setShowInvite(true); setInviteLink(''); }}
-                  className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-white/5 transition-colors border border-dashed border-white/10 group"
-                >
-                  <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center group-hover:bg-primary group-hover:text-white transition-colors">
-                    <UserPlus size={18} />
-                  </div>
-                  <div className="text-left">
-                    <span className="block text-sm font-bold text-text">Add Participants</span>
-                    <span className="block text-xs text-muted">Invite via link</span>
-                  </div>
+                <h4 className="text-sm font-bold text-muted uppercase tracking-wider">{members.length} Participants</h4>
+                <button onClick={() => { setShowSettings(false); setShowInvite(true); }} className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-white/5 transition-colors border border-dashed border-white/10 group">
+                  <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center group-hover:bg-primary group-hover:text-white transition-colors"><UserPlus size={18} /></div>
+                  <div className="text-left"><span className="block text-sm font-bold text-text">Add Participants</span><span className="block text-xs text-muted">Invite via link</span></div>
                 </button>
-
                 {members.map(m => {
                   const isMe = m.user_id === user?.id;
                   const isAdmin = m.user_id === group?.created_by;
                   const currentUserIsAdmin = group?.created_by === user?.id;
-
                   return (
                     <div key={m.user_id} className="flex items-center justify-between p-2 rounded-xl hover:bg-white/5 transition-colors group/member">
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-surface border border-white/5 flex items-center justify-center font-bold text-lg text-primary shadow-inner">
-                          {(memberProfiles[m.user_id] || '?')[0].toUpperCase()}
-                        </div>
-                        <div>
-                          <span className="block text-sm font-semibold text-text">
-                            {isMe ? 'You' : (memberProfiles[m.user_id] || 'Member')}
-                          </span>
-                          <span className="text-[10px] text-muted">
-                            {isAdmin ? 'Group Admin' : 'Participant'}
-                          </span>
-                        </div>
+                        <div className="w-10 h-10 rounded-full bg-surface border border-white/5 flex items-center justify-center font-bold text-lg text-primary shadow-inner">{(memberProfiles[m.user_id] || '?')[0].toUpperCase()}</div>
+                        <div><span className="block text-sm font-semibold text-text">{isMe ? 'You' : (memberProfiles[m.user_id] || 'Member')}</span><span className="text-[10px] text-muted">{isAdmin ? 'Group Admin' : 'Participant'}</span></div>
                       </div>
-                      
-                      {/* Remove Button (Only for Admin, and not for themselves) */}
                       {currentUserIsAdmin && !isMe && (
-                        <button 
-                          onClick={() => handleRemoveMember(m.user_id)}
-                          className="p-2 text-red-500 bg-red-500/10 hover:bg-red-500/20 rounded-xl transition-all"
-                          title="Remove Participant"
-                        >
-                          <Trash2 size={16} />
-                        </button>
+                        <button onClick={() => handleRemoveMember(m.user_id)} className="p-2 text-red-500 bg-red-500/10 hover:bg-red-500/20 rounded-xl transition-all"><Trash2 size={16} /></button>
                       )}
                     </div>
                   );
                 })}
               </div>
-
               <div className="h-px bg-white/5 w-full" />
-
-              {/* Leave Action */}
               <div className="pt-2">
                 {group?.created_by !== user?.id ? (
-                  <button
-                    onClick={() => { setShowSettings(false); handleLeaveGroup(); }}
-                    className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-red-500/10 text-red-500 transition-colors"
-                  >
-                    <LogOut size={18} />
-                    <span className="font-semibold">Exit Group</span>
-                  </button>
+                  <button onClick={() => { setShowSettings(false); handleLeaveGroup(); }} className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-red-500/10 text-red-500 transition-colors"><LogOut size={18} /><span className="font-semibold">Exit Group</span></button>
                 ) : (
-                  <p className="text-xs text-center text-muted italic p-2">As the group creator, you cannot exit the group. You can only remove participants.</p>
+                  <p className="text-xs text-center text-muted italic p-2">As the creator, you can't exit. Use Admin Panel to delete.</p>
                 )}
               </div>
-              
             </div>
           </div>
         </div>
       )}
-
     </div>
   );
 }

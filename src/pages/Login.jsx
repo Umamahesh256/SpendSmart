@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Link, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
-import { Wallet, Loader2 } from 'lucide-react';
+import { Wallet, Loader2, KeyRound } from 'lucide-react';
+import PasswordInput from '../components/PasswordInput';
 import { toast } from 'react-hot-toast';
 
 const Login = () => {
@@ -103,13 +104,13 @@ const Login = () => {
                 <div className="space-y-2">
                   <div className="flex justify-between items-center ml-1">
                     <label className="text-sm font-medium text-muted">Password</label>
-                    <button type="button" className="text-xs text-primary hover:underline">Forgot password?</button>
+                    <Link to="/forgot-password" size="sm" className="text-xs text-primary hover:underline">Forgot password?</Link>
                   </div>
-                  <input
-                    type="password"
+                  <PasswordInput
+                    id="password"
+                    name="password"
                     required
                     placeholder="••••••••"
-                    className="w-full px-5 py-4 bg-white/5 border border-white/10 rounded-2xl focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all text-text"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                   />

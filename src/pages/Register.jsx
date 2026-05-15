@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { Wallet, Loader2 } from 'lucide-react';
+import PasswordInput from '../components/PasswordInput';
 import { toast } from 'react-hot-toast';
 
 const Register = () => {
@@ -131,11 +132,11 @@ const Register = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <label className="text-sm font-medium text-muted ml-1">Password</label>
-                    <input
-                      type="password"
+                    <PasswordInput
+                      id="password"
+                      name="password"
                       required
                       placeholder="••••••••"
-                      className="w-full px-5 py-3 bg-white/5 border border-white/10 rounded-2xl focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all text-text"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                     />
@@ -143,11 +144,11 @@ const Register = () => {
                   
                   <div className="space-y-2">
                     <label className="text-sm font-medium text-muted ml-1">Confirm</label>
-                    <input
-                      type="password"
+                    <PasswordInput
+                      id="confirmPassword"
+                      name="confirmPassword"
                       required
                       placeholder="••••••••"
-                      className="w-full px-5 py-3 bg-white/5 border border-white/10 rounded-2xl focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all text-text"
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(e.target.value)}
                     />
