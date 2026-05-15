@@ -4,13 +4,18 @@ import { supabase } from '../lib/supabase';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import {
   Wallet, TrendingUp, TrendingDown, ArrowRightLeft, ChevronRight,
-  Sparkles, Flame, ShieldCheck, AlertTriangle, Coffee, Sun, Moon, Sunset, Plus
+  Sparkles, Flame, ShieldCheck, AlertTriangle, Coffee, Sun, Moon, Sunset, Plus,
+  BarChart as BarChartIcon, Users as UsersIcon, ArrowUpRight, ArrowDownLeft
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
 import EmptyState from '../components/EmptyState';
+import { calculateSettlements, calculateNetMetrics, groupSpendingByDate } from '../lib/financeUtils';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Cell as RechartsCell } from 'recharts';
+import DailyHeatmap from '../components/DailyHeatmap';
+import GroupSpendingWidget from '../components/GroupSpendingWidget';
 
-const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4'];
+const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 
 // ── Smart Insight Engine ─────────────────────────────────────────────────────
 function getInsight({ todaySpend, monthlyExpense, monthlyIncome, savingsRate, topCategory, balance }) {
@@ -102,11 +107,22 @@ function getGreeting() {
 export default function Dashboard() {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState({ balance: 0, monthlyIncome: 0, monthlyExpense: 0, todaySpend: 0, topCategory: '' });
+  const [stats, setStats] = useState({ 
+    balance: 0, 
+    monthlyIncome: 0, 
+    monthlyExpense: 0, 
+    todaySpend: 0, 
+    topCategory: '',
+    groupShare: 0,
+    netBalance: 0,
+    groupImpact: 0
+  });
   const [recentTransactions, setRecentTransactions] = useState([]);
   const [categoryData, setCategoryData] = useState([]);
+  const [dailySpendingData, setDailySpendingData] = useState([]);
   const [currency, setCurrency] = useState('INR');
   const [userName, setUserName] = useState('');
+  const [groupSettlements, setGroupSettlements] = useState([]);
 
   useEffect(() => {
     async function fetchDashboardData() {
@@ -132,6 +148,49 @@ export default function Dashboard() {
         .eq('user_id', user.id)
         .order('date', { ascending: false });
 
+      // Fetch Group Data
+      const { data: memberships } = await supabase
+        .from('group_members')
+        .select('group_id')
+        .eq('user_id', user.id);
+      
+      const groupIds = memberships?.map(m => m.group_id) || [];
+      
+      let totalGroupShare = 0;
+      let allGroupExpenses = [];
+      let allSettlements = [];
+
+      if (groupIds.length > 0) {
+        // Fetch group expenses for all user groups
+        const { data: groupExpenses } = await supabase
+          .from('group_expenses')
+          .select('*')
+          .in('group_id', groupIds);
+        
+        // Fetch group members to calculate correct shares
+        const { data: groupMembers } = await supabase
+          .from('group_members')
+          .select('user_id, group_id')
+          .in('group_id', groupIds);
+
+        allGroupExpenses = groupExpenses || [];
+
+        // Calculate user's share across all groups
+        groupIds.forEach(gid => {
+          const membersInGroup = groupMembers.filter(m => m.group_id === gid);
+          const expensesInGroup = groupExpenses.filter(e => e.group_id === gid);
+          
+          if (membersInGroup.length > 0) {
+            const { userShare, settlements, balances } = calculateSettlements(membersInGroup, expensesInGroup);
+            totalGroupShare += userShare[user.id] || 0;
+            
+            // Add relevant settlements (only if user owes or is owed)
+            const userSettlements = settlements.filter(s => s.from === user.id || s.to === user.id);
+            allSettlements = [...allSettlements, ...userSettlements];
+          }
+        });
+      }
+
       if (allTransactions) {
         let balance = 0, mIncome = 0, mExpense = 0, todaySpend = 0;
         const categoryMap = {};
@@ -154,14 +213,33 @@ export default function Dashboard() {
           }
         });
 
+        // Combine Personal and Group Share for Net Metrics
+        const { totalOutflow, groupImpactPercent } = calculateNetMetrics(mExpense, totalGroupShare);
+        const netBalance = balance - totalGroupShare; // Liquid balance minus what you owe groups
+
         const topCategory = Object.entries(categoryMap).sort((a, b) => b[1] - a[1])[0]?.[0] || '';
-        setStats({ balance, monthlyIncome: mIncome, monthlyExpense: mExpense, todaySpend, topCategory });
+        setStats({ 
+          balance, 
+          monthlyIncome: mIncome, 
+          monthlyExpense: mExpense, 
+          todaySpend, 
+          topCategory,
+          groupShare: totalGroupShare,
+          netBalance,
+          groupImpact: groupImpactPercent
+        });
+
         setRecentTransactions(allTransactions.slice(0, 5));
+        setGroupSettlements(allSettlements);
 
         const chartData = Object.keys(categoryMap)
           .map(key => ({ name: key, value: categoryMap[key] }))
           .sort((a, b) => b.value - a.value);
         setCategoryData(chartData);
+
+        // Group spending by date for the heatmap/bar chart
+        const dailyData = groupSpendingByDate([...allTransactions.filter(t => t.type === 'expense'), ...allGroupExpenses]);
+        setDailySpendingData(dailyData.slice(-14)); // Last 14 days
       }
       setLoading(false);
     }
@@ -206,34 +284,65 @@ export default function Dashboard() {
         </p>
       </div>
 
-      {/* ── Balance Hero Card ─────────────────────────────────── */}
-      <div className="relative overflow-hidden rounded-3xl p-6 bg-gradient-to-br from-primary/80 to-emerald-700 text-white shadow-xl shadow-primary/30">
-        <div className="absolute -right-10 -top-10 w-48 h-48 rounded-full bg-white/10 blur-2xl" />
-        <div className="absolute -left-6 -bottom-6 w-32 h-32 rounded-full bg-black/10 blur-xl" />
-        <p className="text-sm font-medium text-white/70 mb-1">Total Balance</p>
-        <h2 className={`text-4xl font-bold tracking-tight ${stats.balance < 0 ? 'text-red-200' : 'text-white'}`}>
-          {fmt(stats.balance)}
-        </h2>
-        <p className="text-xs text-white/60 mt-2">{monthName} overview · {savingsRate}% saved</p>
-
-        <div className="flex gap-3 mt-5">
-          <div className="flex-1 bg-white/10 rounded-2xl px-4 py-3 flex items-center gap-3">
-            <div className="p-2 bg-emerald-400/20 rounded-xl">
-              <TrendingUp size={16} className="text-emerald-300" />
+      {/* ── Balance Grid ────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 animate-slide-up">
+        <div className="relative overflow-hidden rounded-3xl p-6 bg-gradient-to-br from-primary/80 to-emerald-700 text-white shadow-xl shadow-primary/20 group">
+          <div className="absolute -right-10 -top-10 w-48 h-48 rounded-full bg-white/10 blur-2xl group-hover:scale-110 transition-transform duration-700" />
+          <p className="text-xs font-bold text-white/70 mb-1 flex items-center gap-2 uppercase tracking-widest">
+            <Wallet size={12} /> Liquid Balance
+          </p>
+          <h2 className="text-4xl font-black tracking-tight">
+            {fmt(stats.balance)}
+          </h2>
+          <div className="flex gap-2 mt-5">
+            <div className="flex-1 bg-white/10 backdrop-blur-md rounded-2xl p-2 flex items-center gap-2 border border-white/10">
+              <div className="p-1.5 bg-emerald-400/20 rounded-lg">
+                <TrendingUp size={12} className="text-emerald-300" />
+              </div>
+              <p className="text-[10px] font-bold truncate">{fmt(stats.monthlyIncome)}</p>
             </div>
-            <div>
-              <p className="text-[10px] text-white/60 uppercase tracking-wider">Income</p>
-              <p className="text-sm font-bold">{fmt(stats.monthlyIncome)}</p>
+            <div className="flex-1 bg-white/10 backdrop-blur-md rounded-2xl p-2 flex items-center gap-2 border border-white/10">
+              <div className="p-1.5 bg-red-400/20 rounded-lg">
+                <TrendingDown size={12} className="text-red-300" />
+              </div>
+              <p className="text-[10px] font-bold truncate">{fmt(stats.monthlyExpense)}</p>
             </div>
           </div>
-          <div className="flex-1 bg-white/10 rounded-2xl px-4 py-3 flex items-center gap-3">
-            <div className="p-2 bg-red-400/20 rounded-xl">
-              <TrendingDown size={16} className="text-red-300" />
-            </div>
-            <div>
-              <p className="text-[10px] text-white/60 uppercase tracking-wider">Expenses</p>
-              <p className="text-sm font-bold">{fmt(stats.monthlyExpense)}</p>
-            </div>
+        </div>
+
+        <div className="glass p-6 rounded-3xl relative overflow-hidden group bg-surface/40">
+          <div className="absolute -right-6 -top-6 w-24 h-24 bg-red-500/10 blur-2xl rounded-full group-hover:scale-125 transition-transform duration-700" />
+          <p className="text-xs font-bold text-muted uppercase tracking-widest flex items-center gap-2 mb-2">
+            <TrendingDown size={14} className="text-red-400" /> Group Liability
+          </p>
+          <h2 className="text-3xl font-black text-text">{fmt(Math.abs(stats.groupShare))}</h2>
+          <div className="mt-4 pt-4 border-t border-white/5 flex items-center justify-between">
+            <span className="text-[10px] text-muted font-bold uppercase">Pending Settlements</span>
+            <span className={`text-[10px] font-black uppercase px-2 py-1 rounded-lg ${groupSettlements.length > 0 ? 'bg-amber-400/10 text-amber-400' : 'bg-emerald-400/10 text-emerald-400'}`}>
+              {groupSettlements.length > 0 ? `${groupSettlements.length} Action Items` : 'All Clear'}
+            </span>
+          </div>
+        </div>
+
+        <div className="glass p-6 rounded-3xl relative overflow-hidden group bg-gradient-to-br from-white/[0.03] to-white/[0.01]">
+          <div className="absolute -right-6 -top-6 w-32 h-32 bg-primary/10 blur-3xl rounded-full group-hover:scale-125 transition-transform duration-700" />
+          <p className="text-xs font-bold text-muted uppercase tracking-widest flex items-center gap-2 mb-2">
+            <Sparkles size={14} className="text-primary" /> Net Position
+          </p>
+          <h2 className="text-3xl font-black text-gradient leading-tight">{fmt(stats.netBalance)}</h2>
+          <p className="text-[10px] text-muted mt-2 italic">Actual worth after settling group dues</p>
+          
+          <div className="mt-4 flex -space-x-2">
+            {groupSettlements.slice(0, 3).map((_, i) => (
+              <div key={i} className="w-6 h-6 rounded-full border-2 border-surface bg-primary/20 flex items-center justify-center text-[8px] font-bold text-primary">
+                {i + 1}
+              </div>
+            ))}
+            {groupSettlements.length > 3 && (
+              <div className="w-6 h-6 rounded-full border-2 border-surface bg-muted/20 flex items-center justify-center text-[8px] font-bold text-muted">
+                +{groupSettlements.length - 3}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -254,21 +363,24 @@ export default function Dashboard() {
       {/* ── Desktop Grid ────────────────────────────────────── */}
       <div className="grid lg:grid-cols-2 gap-6">
         <div className="space-y-6">
+          {/* Daily Spikes */}
+          <DailyHeatmap data={dailySpendingData} />
+          
           {/* Spending Donut */}
           {categoryData.length > 0 && (
             <div className="glass p-6 rounded-3xl h-full border border-white/5">
               <h3 className="text-sm font-bold text-muted uppercase tracking-wider mb-6 flex items-center gap-2">
                 <PieChart size={16} className="text-primary" />
-                Spending Breakdown
+                Category Split
               </h3>
               <div className="flex flex-col sm:flex-row items-center gap-8">
-                <div className="w-48 h-48 flex-shrink-0 relative">
+                <div className="w-32 h-32 flex-shrink-0 relative">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                       <Pie
                         data={categoryData}
                         cx="50%" cy="50%"
-                        innerRadius={55} outerRadius={75}
+                        innerRadius={45} outerRadius={60}
                         paddingAngle={4}
                         dataKey="value"
                         stroke="none"
@@ -277,26 +389,17 @@ export default function Dashboard() {
                           <Cell key={i} fill={COLORS[i % COLORS.length]} className="hover:opacity-80 transition-opacity outline-none" />
                         ))}
                       </Pie>
-                      <Tooltip
-                        formatter={(v) => fmt(v)}
-                        contentStyle={{ backgroundColor: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', fontSize: '12px', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }}
-                        itemStyle={{ color: '#fff' }}
-                      />
                     </PieChart>
                   </ResponsiveContainer>
-                  <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                    <p className="text-[10px] text-muted uppercase font-bold">Total</p>
-                    <p className="text-sm font-black">{fmt(stats.monthlyExpense)}</p>
-                  </div>
                 </div>
-                <div className="flex-1 space-y-3 w-full">
-                  {categoryData.slice(0, 6).map((item, i) => (
-                    <div key={item.name} className="group flex items-center justify-between gap-2 p-2 rounded-xl hover:bg-white/5 transition-all">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <span className="w-3 h-3 rounded-full flex-shrink-0 shadow-sm" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
-                        <span className="text-sm text-muted group-hover:text-text transition-colors truncate capitalize">{item.name}</span>
+                <div className="flex-1 space-y-2 w-full">
+                  {categoryData.slice(0, 4).map((item, i) => (
+                    <div key={item.name} className="flex items-center justify-between gap-2 p-1.5 rounded-xl hover:bg-white/5 transition-all">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
+                        <span className="text-xs text-muted truncate capitalize">{item.name}</span>
                       </div>
-                      <span className="text-sm font-bold flex-shrink-0">{fmt(item.value)}</span>
+                      <span className="text-xs font-bold">{fmt(item.value)}</span>
                     </div>
                   ))}
                 </div>
@@ -306,6 +409,12 @@ export default function Dashboard() {
         </div>
 
         <div className="space-y-6">
+          {/* Group Impact */}
+          <GroupSpendingWidget 
+            impactPercent={stats.groupImpact} 
+            groupShare={stats.groupShare} 
+          />
+
           {/* Recent Transactions */}
           <div className="glass rounded-3xl overflow-hidden border border-white/5 flex flex-col h-full">
             <div className="flex justify-between items-center px-6 py-5 border-b border-white/5">

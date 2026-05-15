@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import EmptyState from '../components/EmptyState';
+import { calculateSettlements } from '../lib/financeUtils';
 
 import { EXPENSE_CATEGORIES as CATEGORIES } from '../lib/categories';
 
@@ -29,6 +30,7 @@ export default function GroupRoom() {
   const [memberProfiles, setMemberProfiles] = useState({});
   const [loading, setLoading]           = useState(true);
   const [isMember, setIsMember]         = useState(false);
+  const [settlementData, setSettlementData] = useState(null);
 
   // Add-expense modal
   const [showModal, setShowModal]       = useState(false);
@@ -87,7 +89,16 @@ export default function GroupRoom() {
     const { data: exp } = await supabase
       .from('group_expenses').select('*')
       .eq('group_id', groupId).order('date', { ascending: false });
-    setExpenses(exp || []);
+    const expensesList = exp || [];
+    setExpenses(expensesList);
+
+    // Calculate settlements
+    if (mems && expensesList.length > 0) {
+      const settle = calculateSettlements(mems, expensesList);
+      setSettlementData(settle);
+    } else {
+      setSettlementData(null);
+    }
 
     setLoading(false);
   }, [user, groupId, navigate]);
@@ -293,7 +304,7 @@ export default function GroupRoom() {
     <div className="space-y-4 animate-fade-in">
 
       {/* ── Header ─────────────────────────────────────────── */}
-      <div className="flex items-start gap-3">
+      <div className="flex items-start gap-3 animate-slide-up">
         <button onClick={() => navigate(-1)} className="p-2 rounded-xl bg-surface hover:bg-white/10 transition-colors mt-0.5">
           <ArrowLeft size={18} />
         </button>
@@ -324,24 +335,61 @@ export default function GroupRoom() {
       </div>
 
       {/* ── Summary cards ──────────────────────────────────── */}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 gap-3 animate-slide-up" style={{ animationDelay: '0.1s' }}>
         <div className="glass p-4 rounded-2xl">
           <p className="text-[10px] text-muted uppercase tracking-wider">Group Total</p>
           <p className="text-xl font-bold mt-1">{fmt(groupTotal)}</p>
           <p className="text-xs text-muted mt-0.5">{expenses.length} expense{expenses.length !== 1 ? 's' : ''}</p>
         </div>
         <div className="glass p-4 rounded-2xl">
-          <p className="text-[10px] text-muted uppercase tracking-wider">My Contribution</p>
-          <p className="text-xl font-bold mt-1 text-primary">{fmt(myTotal)}</p>
-          <p className="text-xs text-muted mt-0.5">
-            {groupTotal > 0 ? ((myTotal / groupTotal) * 100).toFixed(0) : 0}% of total
-          </p>
+          <p className="text-[10px] text-muted uppercase tracking-wider">My Status</p>
+          {settlementData ? (
+            <>
+              <p className={`text-xl font-bold mt-1 ${settlementData.balances[user.id] >= 0 ? 'text-primary' : 'text-red-400'}`}>
+                {fmt(Math.abs(settlementData.balances[user.id] || 0))}
+              </p>
+              <p className="text-xs text-muted mt-0.5">
+                {settlementData.balances[user.id] >= 0 ? 'You are owed' : 'You owe money'}
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-xl font-bold mt-1 text-primary">{fmt(myTotal)}</p>
+              <p className="text-xs text-muted mt-0.5">My contribution</p>
+            </>
+          )}
         </div>
       </div>
 
+      {/* ── Settlement breakdown ────────────────────────────── */}
+      {settlementData && settlementData.settlements.length > 0 && (
+        <div className="glass p-4 rounded-2xl bg-white/[0.02] animate-slide-up" style={{ animationDelay: '0.2s' }}>
+          <div className="flex justify-between items-center mb-3">
+            <h3 className="text-[10px] font-bold text-muted uppercase tracking-wider">Settlement Plan</h3>
+            <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-bold">OPTIMIZED</span>
+          </div>
+          <div className="space-y-2">
+            {settlementData.settlements.map((s, idx) => (
+              <div key={idx} className="flex items-center justify-between text-xs py-1 border-b border-white/5 last:border-0">
+                <div className="flex items-center gap-2">
+                  <span className={s.from === user.id ? 'text-red-400 font-bold' : ''}>
+                    {s.from === user.id ? 'You' : (memberProfiles[s.from] || 'Member')}
+                  </span>
+                  <span className="text-muted text-[10px]">owes</span>
+                  <span className={s.to === user.id ? 'text-primary font-bold' : ''}>
+                    {s.to === user.id ? 'You' : (memberProfiles[s.to] || 'Member')}
+                  </span>
+                </div>
+                <span className="font-bold">{fmt(s.amount)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* ── Expenses list ──────────────────────────────────── */}
-      <div className="glass rounded-2xl overflow-hidden">
-        <div className="px-5 py-3 border-b border-white/5">
+      <div className="glass rounded-2xl overflow-hidden animate-slide-up" style={{ animationDelay: '0.3s' }}>
+        <div className="px-5 py-3 border-b border-white/5 bg-white/[0.02]">
           <h3 className="text-sm font-bold text-muted uppercase tracking-wider">All Expenses</h3>
         </div>
         {expenses.length === 0 ? (
@@ -362,15 +410,17 @@ export default function GroupRoom() {
                     <TrendingDown size={15} />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold truncate">{exp.description || exp.category}</p>
-                    <p className="text-xs text-muted">
-                      <span className={isOwn ? 'text-primary font-medium' : ''}>
-                        {isOwn ? 'You' : (memberProfiles[exp.added_by] || 'Unknown')}
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-semibold truncate">{exp.description || exp.category}</p>
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-tighter ${isOwn ? 'bg-primary/20 text-primary' : 'bg-blue-500/20 text-blue-400'}`}>
+                        Paid by {isOwn ? 'You' : (memberProfiles[exp.added_by] || 'Member')}
                       </span>
-                      {' '}· {exp.category} · {new Date(exp.date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })}
+                    </div>
+                    <p className="text-xs text-muted">
+                      {exp.category} · {new Date(exp.date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })}
                       {exp.is_split && (
-                        <span className="ml-2 px-1.5 py-0.5 bg-primary/10 text-primary rounded text-[10px] font-bold uppercase">
-                          Split with {exp.split_members?.length || members.length} people
+                        <span className="ml-2 px-1.5 py-0.5 bg-white/5 text-muted rounded text-[10px] font-medium">
+                          Split among {exp.split_members?.length || members.length}
                         </span>
                       )}
                     </p>
