@@ -29,7 +29,7 @@ class ErrorBoundary extends React.Component {
   }
 }
 
-console.log('SpendSmart v1.0.2 Starting...');
+console.log('SpendSmart v1.0.5 Starting...');
 
 try {
   const root = document.getElementById('root');

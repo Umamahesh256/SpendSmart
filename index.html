@@ -7,11 +7,11 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <meta name="build-id" content="1777459148" />
+    <meta name="build-id" content="v1.0.5" />
     <title>SpendSmart</title>
     <link rel="manifest" href="/manifest.json" />
     <meta name="theme-color" content="#3b82f6" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 
     <script>
@@ -36,14 +36,25 @@
   <body>
     <div id="root"></div>
     
+    <!-- Permanent Version Tag (Hidden by default, shown if React fails) -->
+    <div id="version-tag" style="position: fixed; bottom: 10px; right: 10px; font-size: 10px; color: #475569; z-index: 10000; font-family: monospace; pointer-events: none;">
+      Build: v1.0.5
+    </div>
+
     <!-- Fallback UI if React fails to mount -->
-    <div id="react-load-error" style="display: none; position: fixed; inset: 0; background: #0f172a; color: #ef4444; padding: 40px; text-align: center; font-family: sans-serif; z-index: 9999;">
-      <h1 style="font-size: 24px; margin-bottom: 16px;">Application failed to load</h1>
-      <p style="color: #94a3b8; margin-bottom: 24px; max-width: 500px; margin-left: auto; margin-right: auto;">
-        This might be due to a security policy, missing environment variables, or a runtime crash.
-        Please check the browser console for details.
-      </p>
-      <button onclick="window.location.reload()" style="background: #3b82f6; color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: 600;">Reload Page</button>
+    <div id="react-load-error" style="display: none; position: fixed; inset: 0; background: #020617; color: #ef4444; padding: 20px; text-align: center; font-family: 'Inter', sans-serif; z-index: 9999; flex-direction: column; align-items: center; justify-content: center;">
+      <div style="background: rgba(239, 68, 68, 0.05); padding: 32px; border-radius: 24px; border: 1px solid rgba(239, 68, 68, 0.2); max-width: 450px; width: 90%;">
+        <h1 style="font-size: 28px; margin-bottom: 12px; font-weight: 800; letter-spacing: -0.05em; color: #f8fafc;">APPLICATION ERROR</h1>
+        <p style="color: #94a3b8; margin-bottom: 24px; line-height: 1.6; font-size: 15px;">
+          The app failed to mount. This usually means your <b>Vercel Environment Variables</b> are missing or the JS bundle crashed.
+        </p>
+        <div style="text-align: left; background: #0f172a; padding: 16px; border-radius: 12px; margin-bottom: 24px; font-family: monospace; font-size: 12px; color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.2);">
+          <span style="color: #4ade80">></span> Check Browser Console (F12)<br>
+          <span style="color: #4ade80">></span> Verify VITE_SUPABASE_URL<br>
+          <span style="color: #4ade80">></span> Trigger Vercel REDEPLOY
+        </div>
+        <button onclick="window.location.reload()" style="background: #3b82f6; color: white; border: none; padding: 14px 32px; border-radius: 12px; cursor: pointer; font-weight: 700; width: 100%; font-size: 16px;">Reload Page</button>
+      </div>
     </div>
     
     <script type="module" src="/src/main.jsx"></script>
@@ -52,13 +63,15 @@
       // Diagnostic script to check if React mounts
       setTimeout(() => {
         const rootElement = document.getElementById('root');
-        // If root is still empty or contains nothing but whitespace after 5s
+        // If root is still empty after 4s
         if (rootElement && rootElement.innerHTML.trim() === '') {
-          console.error('CRITICAL: React failed to mount within 5 seconds. Check for bundle errors or environment variables.');
+          console.error('CRITICAL: React failed to mount. Most likely missing Environment Variables in Vercel.');
           const errorDisplay = document.getElementById('react-load-error');
-          if (errorDisplay) errorDisplay.style.display = 'block';
+          if (errorDisplay) {
+            errorDisplay.style.display = 'flex';
+          }
         }
-      }, 5000);
+      }, 4000);
 
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
