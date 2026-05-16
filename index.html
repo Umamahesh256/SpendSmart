@@ -34,13 +34,16 @@
     </script>
   </head>
   <body>
-    <div id="root">
-      {/* Fallback UI if React fails to mount */}
-      <div id="react-load-error" style="display: none; padding: 40px; text-align: center; font-family: sans-serif; color: #ef4444;">
-        <h1 style="font-size: 24px; margin-bottom: 16px;">Application failed to load</h1>
-        <p style="color: #6b7280; margin-bottom: 24px;">This might be due to a security policy or missing environment variables.</p>
-        <button onclick="window.location.reload()" style="background: #3b82f6; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer;">Reload Page</button>
-      </div>
+    <div id="root"></div>
+    
+    <!-- Fallback UI if React fails to mount -->
+    <div id="react-load-error" style="display: none; position: fixed; inset: 0; background: #0f172a; color: #ef4444; padding: 40px; text-align: center; font-family: sans-serif; z-index: 9999;">
+      <h1 style="font-size: 24px; margin-bottom: 16px;">Application failed to load</h1>
+      <p style="color: #94a3b8; margin-bottom: 24px; max-width: 500px; margin-left: auto; margin-right: auto;">
+        This might be due to a security policy, missing environment variables, or a runtime crash.
+        Please check the browser console for details.
+      </p>
+      <button onclick="window.location.reload()" style="background: #3b82f6; color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: 600;">Reload Page</button>
     </div>
     
     <script type="module" src="/src/main.jsx"></script>
@@ -49,8 +52,9 @@
       // Diagnostic script to check if React mounts
       setTimeout(() => {
         const rootElement = document.getElementById('root');
+        // If root is still empty or contains nothing but whitespace after 5s
         if (rootElement && rootElement.innerHTML.trim() === '') {
-          console.error('React failed to mount within 5 seconds');
+          console.error('CRITICAL: React failed to mount within 5 seconds. Check for bundle errors or environment variables.');
           const errorDisplay = document.getElementById('react-load-error');
           if (errorDisplay) errorDisplay.style.display = 'block';
         }

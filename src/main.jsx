@@ -31,17 +31,32 @@ class ErrorBoundary extends React.Component {
 
 console.log('SpendSmart v1.0.2 Starting...');
 
-const root = document.getElementById('root');
-if (root) {
-  ReactDOM.createRoot(root).render(
-    <React.StrictMode>
-      <ErrorBoundary>
-        <BrowserRouter>
-          <App />
-        </BrowserRouter>
-      </ErrorBoundary>
-    </React.StrictMode>,
-  );
-} else {
-  console.error('Root element not found!');
+try {
+  const root = document.getElementById('root');
+  if (root) {
+    ReactDOM.createRoot(root).render(
+      <React.StrictMode>
+        <ErrorBoundary>
+          <BrowserRouter>
+            <App />
+          </BrowserRouter>
+        </ErrorBoundary>
+      </React.StrictMode>,
+    );
+  } else {
+    throw new Error('Root element not found!');
+  }
+} catch (err) {
+  console.error('CRITICAL: Failed to initialize React app:', err);
+  // Show a basic error UI if the app fails to even start rendering
+  const root = document.getElementById('root');
+  if (root) {
+    root.innerHTML = `
+      <div style="padding: 40px; text-align: center; color: #ef4444; font-family: sans-serif;">
+        <h1>Initialization Error</h1>
+        <p>${err.message}</p>
+        <button onclick="window.location.reload()" style="padding: 10px 20px; cursor: pointer;">Try Again</button>
+      </div>
+    `;
+  }
 }

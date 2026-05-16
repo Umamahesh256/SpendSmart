@@ -4,14 +4,12 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  const errorMsg = 'CRITICAL: Supabase environment variables are missing! Check Vercel project settings.';
-  console.error(errorMsg);
-  // We throw a delayed error to ensure the ErrorBoundary can catch it during app initialization
+  console.error('%c CRITICAL: Supabase environment variables are missing!', 'background: #ef4444; color: white; font-size: 16px; padding: 4px; border-radius: 4px;');
+  console.warn('Check Vercel Project Settings -> Environment Variables. Ensure VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are set.');
+  
+  // Attach a warning to the window so our diagnostic script can see it
   if (typeof window !== 'undefined') {
-    window.addEventListener('load', () => {
-      // Just a log for now, as throwing here might be too early for some boundaries
-      console.warn('App will likely fail because of missing Supabase config.');
-    });
+    window.__SUPABASE_CONFIG_ERROR__ = true;
   }
 }
 
