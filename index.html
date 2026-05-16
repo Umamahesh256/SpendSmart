@@ -13,26 +13,49 @@
     <meta name="theme-color" content="#3b82f6" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  </head>
-  <body>
-    <div id="root"></div>
+
     <script>
       // Fix for "TrustedHTML" assignment error in production (Trusted Types enforcement)
+      // We define this in the head to ensure it's active before ANY other script loads.
       if (window.trustedTypes && window.trustedTypes.createPolicy) {
         try {
-          window.trustedTypes.createPolicy('default', {
-            createHTML: (string) => string,
-            createScriptURL: (string) => string,
-            createScript: (string) => string,
-          });
-          console.log('Trusted Types Policy created successfully');
+          if (!window.trustedTypes.defaultPolicy) {
+            window.trustedTypes.createPolicy('default', {
+              createHTML: (string) => string,
+              createScriptURL: (string) => string,
+              createScript: (string) => string,
+            });
+            console.log('Trusted Types Policy created successfully in <head>');
+          }
         } catch (e) {
           console.error('Failed to create Trusted Types Policy:', e);
         }
       }
     </script>
+  </head>
+  <body>
+    <div id="root">
+      {/* Fallback UI if React fails to mount */}
+      <div id="react-load-error" style="display: none; padding: 40px; text-align: center; font-family: sans-serif; color: #ef4444;">
+        <h1 style="font-size: 24px; margin-bottom: 16px;">Application failed to load</h1>
+        <p style="color: #6b7280; margin-bottom: 24px;">This might be due to a security policy or missing environment variables.</p>
+        <button onclick="window.location.reload()" style="background: #3b82f6; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer;">Reload Page</button>
+      </div>
+    </div>
+    
     <script type="module" src="/src/main.jsx"></script>
+    
     <script>
+      // Diagnostic script to check if React mounts
+      setTimeout(() => {
+        const rootElement = document.getElementById('root');
+        if (rootElement && rootElement.innerHTML.trim() === '') {
+          console.error('React failed to mount within 5 seconds');
+          const errorDisplay = document.getElementById('react-load-error');
+          if (errorDisplay) errorDisplay.style.display = 'block';
+        }
+      }, 5000);
+
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
           navigator.serviceWorker.register('/sw.js').catch(err => console.error('SW registration failed:', err));
