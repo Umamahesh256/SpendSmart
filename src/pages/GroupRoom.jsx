@@ -2,12 +2,15 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { supabase } from '../lib/supabase';
-import {
-  Users, Plus, Trash2, X, ArrowLeft,
-  UserPlus, Copy, Check, Share2, Link2, DollarSign, Settings2, Edit2, LogOut, TrendingDown
-} from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import EmptyState from '../components/EmptyState';
+import AddContributionModal from '../components/AddContributionModal';
+import { groupExpenseSchema, calculatePoolStats } from '../lib/groupLedger';
+import {
+  Users, Plus, Trash2, X, ArrowLeft,
+  UserPlus, Copy, Check, Share2, Link2, DollarSign, Settings2, Edit2, LogOut, TrendingDown,
+  ArrowUpCircle, ArrowDownCircle, Wallet, History, Info
+} from 'lucide-react';
 
 
 import { EXPENSE_CATEGORIES as CATEGORIES } from '../lib/categories';
@@ -26,20 +29,26 @@ export default function GroupRoom() {
 
   const [group, setGroup]               = useState(null);
   const [expenses, setExpenses]         = useState([]);
+  const [contributions, setContributions] = useState([]);
   const [members, setMembers]           = useState([]);
   const [memberProfiles, setMemberProfiles] = useState({});
   const [loading, setLoading]           = useState(true);
   const [isMember, setIsMember]         = useState(false);
+  const [isManager, setIsManager]       = useState(false);
 
 
   // Add-expense modal
   const [showModal, setShowModal]       = useState(false);
+  const [showContributionModal, setShowContributionModal] = useState(false);
+  const [editContribution, setEditContribution] = useState(null);
   const [amount, setAmount]             = useState('');
   const [description, setDescription]  = useState('');
   const [category, setCategory]         = useState(CATEGORIES[0]);
   const [date, setDate]                 = useState(new Date().toISOString().split('T')[0]);
+  const [paymentSource, setPaymentSource] = useState('personal_pocket');
   const [formLoading, setFormLoading]   = useState(false);
   const [formMsg, setFormMsg]           = useState({ type: '', text: '' });
+  const [errors, setErrors]             = useState({});
 
   // Split logic
   const [isSplit, setIsSplit]           = useState(false);
@@ -55,6 +64,9 @@ export default function GroupRoom() {
   const [editGroupInfo, setEditGroupInfo] = useState(false);
   const [editName, setEditName] = useState('');
   const [editDesc, setEditDesc] = useState('');
+
+  // Pool stats
+  const [poolStats, setPoolStats] = useState({ balance: 0, totalInflow: 0, totalOutflow: 0, memberContributions: {} });
 
   // Invite panel
   const [showInvite, setShowInvite]         = useState(false);
@@ -78,20 +90,23 @@ export default function GroupRoom() {
       const eDate = e.date || '';
       const eMonth = eDate.slice(0, 7);
       const userId = e.added_by;
+      const source = e.payment_source || 'personal_pocket';
 
       if (!userId || amt <= 0) return;
 
+      const updateReport = (report) => {
+        report.total += amt;
+        if (!report.breakdown[userId]) report.breakdown[userId] = { total: 0, pool: 0, pocket: 0 };
+        report.breakdown[userId].total += amt;
+        if (source === 'group_fund') report.breakdown[userId].pool += amt;
+        else report.breakdown[userId].pocket += amt;
+      };
+
       // Monthly Report
-      if (eMonth === thisMonth) {
-        monthly.total += amt;
-        monthly.breakdown[userId] = (monthly.breakdown[userId] || 0) + amt;
-      }
+      if (eMonth === thisMonth) updateReport(monthly);
 
       // Daily Report
-      if (eDate === today) {
-        daily.total += amt;
-        daily.breakdown[userId] = (daily.breakdown[userId] || 0) + amt;
-      }
+      if (eDate === today) updateReport(daily);
     });
 
     return { daily, monthly };
@@ -132,10 +147,20 @@ export default function GroupRoom() {
       const expensesList = exp || [];
       setExpenses(expensesList);
 
-      // Calculate and set reporting stats
+      const { data: conts } = await supabase
+        .from('group_contributions').select('*')
+        .eq('group_id', groupId).order('date', { ascending: false });
+      const contributionsList = conts || [];
+      setContributions(contributionsList);
+
+      // Calculate stats
       const { daily, monthly } = calculateReports(expensesList);
       setDailyStats(daily);
       setMonthlyStats(monthly);
+
+      const stats = calculatePoolStats(contributionsList, expensesList);
+      setPoolStats(stats);
+      setIsManager(g.created_by === user.id);
 
     } catch (err) {
       console.error('Error fetching group data:', err);
@@ -149,12 +174,22 @@ export default function GroupRoom() {
 
   // ── Real-time expense updates ─────────────────────────────
   useEffect(() => {
-    const ch = supabase.channel(`grp-exp-${groupId}`)
+    const chExp = supabase.channel(`grp-exp-${groupId}`)
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'group_expenses', filter: `group_id=eq.${groupId}` },
         () => fetchGroupData())
       .subscribe();
-    return () => supabase.removeChannel(ch);
+
+    const chCont = supabase.channel(`grp-cont-${groupId}`)
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'group_contributions', filter: `group_id=eq.${groupId}` },
+        () => fetchGroupData())
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(chExp);
+      supabase.removeChannel(chCont);
+    };
   }, [groupId, fetchGroupData]);
 
   // ── Load pending invites for this group ───────────────────
@@ -219,39 +254,74 @@ export default function GroupRoom() {
     }
   };
 
-  // ── Delete own expense ────────────────────────────────────
-  const handleDeleteExpense = async (id) => {
-    if (!confirm('Delete this expense?')) return;
-    const { error } = await supabase.from('group_expenses').delete().eq('id', id).eq('added_by', user.id);
-    if (error) {
-      toast.error('Failed to delete expense');
-    } else {
-      toast.success('Expense deleted');
-      setExpenses(prev => prev.filter(e => e.id !== id));
+  // ── Delete contribution ───────────────────────────────────
+  const handleDeleteContribution = async (id) => {
+    if (!confirm('Delete this contribution record? This will affect the pool balance.')) return;
+    try {
+      const { error } = await supabase
+        .from('group_contributions')
+        .delete()
+        .eq('id', id)
+        .eq('created_by', user.id); // Only manager/creator can delete
+
+      if (error) throw error;
+      toast.success('Contribution deleted');
+      fetchGroupData();
+    } catch (err) {
+      toast.error('Failed to delete contribution');
+      console.error(err);
     }
+  };
+
+  const handleEditContribution = (item) => {
+    setEditContribution(item);
+    setShowContributionModal(true);
   };
 
   // ── Add expense ───────────────────────────────────────────
   const handleAddExpense = async (e) => {
     e.preventDefault();
     setFormLoading(true);
-    setFormMsg({ type: '', text: '' });
+    setErrors({});
+    
     try {
-      const { error } = await supabase.from('group_expenses').insert([{
-        group_id: groupId, added_by: user.id,
-        amount: parseFloat(amount), description, category, date,
+      const expenseData = {
+        amount: parseFloat(amount),
+        description,
+        category,
+        date,
+        payment_source: paymentSource,
         is_split: isSplit,
         split_members: isSplit ? selectedSplitMembers : [],
+      };
+
+      // Zod Validation
+      groupExpenseSchema.parse(expenseData);
+
+      const { error } = await supabase.from('group_expenses').insert([{
+        ...expenseData,
+        group_id: groupId,
+        added_by: user.id
       }]);
+
       if (error) throw error;
       toast.success('Expense added!');
       setAmount(''); setDescription(''); setCategory(CATEGORIES[0]);
       setDate(new Date().toISOString().split('T')[0]);
+      setPaymentSource('personal_pocket');
       setIsSplit(false);
       setSelectedSplitMembers([]);
       setShowModal(false);
     } catch (err) {
-      toast.error(err.message);
+      if (err.name === 'ZodError') {
+        const fieldErrors = {};
+        err.errors.forEach(e => {
+          fieldErrors[e.path[0]] = e.message;
+        });
+        setErrors(fieldErrors);
+      } else {
+        toast.error(err.message);
+      }
     } finally {
       setFormLoading(false);
     }
@@ -327,8 +397,16 @@ export default function GroupRoom() {
   };
 
   // Derived totals with robustness
-  const myTotal    = expenses.filter(e => e && e.added_by === user?.id).reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
   const groupTotal = expenses.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+  
+  // My Total Contribution = (Personal Pocket expenses) + (My contributions to the pool)
+  const myPocketSpending = expenses
+    .filter(e => e && e.added_by === user?.id && e.payment_source === 'personal_pocket')
+    .reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+  const myPoolContributions = contributions
+    .filter(c => c && c.user_id === user?.id)
+    .reduce((s, c) => s + (parseFloat(c.amount) || 0), 0);
+  const myTotalContribution = myPocketSpending + myPoolContributions;
 
   if (loading) return (
     <div className="flex justify-center items-center h-64">
@@ -371,11 +449,55 @@ export default function GroupRoom() {
             <Settings2 size={18} />
           </button>
           <button
-            onClick={() => { setShowModal(true); setFormMsg({ type: '', text: '' }); }}
-            className="flex items-center gap-1.5 bg-primary text-white px-3 py-2.5 sm:px-4 rounded-xl font-medium text-sm hover:bg-emerald-400 transition-colors shadow-lg shadow-primary/20"
+            onClick={() => { setShowModal(true); setErrors({}); }}
+            className="flex items-center gap-1.5 bg-surface border border-white/10 text-text px-3 py-2.5 sm:px-4 rounded-xl font-medium text-sm hover:bg-white/10 transition-colors shadow-lg"
           >
-            <Plus size={18} /> <span className="hidden sm:inline">Add Expense</span>
+            <Plus size={18} /> <span className="hidden sm:inline">Expense</span>
           </button>
+          {isManager && (
+            <button
+              onClick={() => setShowContributionModal(true)}
+              className="flex items-center gap-1.5 bg-primary text-white px-3 py-2.5 sm:px-4 rounded-xl font-bold text-sm hover:bg-emerald-400 transition-colors shadow-lg shadow-primary/20"
+            >
+              <ArrowUpCircle size={18} /> <span className="hidden sm:inline">Add Funds</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* ── Group Pool Card ───────────────────────────────── */}
+      <div className="glass p-5 rounded-3xl bg-gradient-to-br from-primary/20 to-transparent border border-primary/20 shadow-xl shadow-primary/5 animate-slide-up" style={{ animationDelay: '0.05s' }}>
+        <div className="flex justify-between items-center mb-4">
+          <div className="flex items-center gap-2">
+            <div className="p-2 bg-primary/20 rounded-lg text-primary">
+              <Wallet size={20} />
+            </div>
+            <div>
+              <p className="text-[10px] text-primary font-bold uppercase tracking-widest">Group Fund Pool</p>
+              <h2 className="text-3xl font-black tracking-tight">{fmt(poolStats.balance)}</h2>
+            </div>
+          </div>
+          <div className="text-right">
+            <p className="text-[10px] text-muted font-bold uppercase tracking-widest">Status</p>
+            <div className="flex items-center gap-1 text-xs font-bold text-emerald-400">
+              <Check size={12} /> Live Balance
+            </div>
+          </div>
+        </div>
+        
+        <div className="grid grid-cols-2 gap-4 pt-4 border-t border-white/5">
+          <div className="flex flex-col">
+            <span className="text-[10px] text-muted font-bold uppercase tracking-widest flex items-center gap-1">
+              <ArrowUpCircle size={10} className="text-emerald-400" /> Total Collected
+            </span>
+            <span className="text-sm font-bold mt-1">{fmt(poolStats.totalInflow)}</span>
+          </div>
+          <div className="flex flex-col">
+            <span className="text-[10px] text-muted font-bold uppercase tracking-widest flex items-center gap-1">
+              <ArrowDownCircle size={10} className="text-red-400" /> Spent from Pool
+            </span>
+            <span className="text-sm font-bold mt-1">{fmt(poolStats.totalOutflow)}</span>
+          </div>
         </div>
       </div>
 
@@ -387,9 +509,12 @@ export default function GroupRoom() {
           <p className="text-xs text-muted mt-0.5">{expenses.length} expense{expenses.length !== 1 ? 's' : ''}</p>
         </div>
         <div className="glass p-4 rounded-2xl bg-white/[0.02]">
-          <p className="text-[10px] text-muted uppercase tracking-wider">My Spending</p>
-          <p className="text-xl font-bold mt-1 text-primary">{fmt(myTotal)}</p>
-          <p className="text-xs text-muted mt-0.5">Total contribution</p>
+          <p className="text-[10px] text-muted uppercase tracking-wider">My Contribution</p>
+          <p className="text-xl font-bold mt-1 text-primary">{fmt(myTotalContribution)}</p>
+          <div className="flex gap-2 mt-0.5">
+            <span className="text-[9px] text-muted">Pocket: {fmt(myPocketSpending)}</span>
+            <span className="text-[9px] text-muted">Pool: {fmt(myPoolContributions)}</span>
+          </div>
         </div>
       </div>
 
@@ -408,10 +533,16 @@ export default function GroupRoom() {
             </div>
             <div className="space-y-2">
               {Object.entries(dailyStats.breakdown).length > 0 ? (
-                Object.entries(dailyStats.breakdown).map(([uid, amt]) => (
+                Object.entries(dailyStats.breakdown).map(([uid, stats]) => (
                   <div key={uid} className="flex justify-between items-center text-sm">
                     <span className="text-muted">{uid === user.id ? 'You' : (memberProfiles[uid] || 'Member')}</span>
-                    <span className="font-medium">{fmt(amt)}</span>
+                    <div className="text-right">
+                      <span className="font-bold block">{fmt(stats.total)}</span>
+                      <div className="flex gap-2 text-[9px] font-bold justify-end opacity-70">
+                        {stats.pool > 0 && <span className="text-orange-400">Pool: {fmt(stats.pool)}</span>}
+                        {stats.pocket > 0 && <span className="text-blue-400">Pocket: {fmt(stats.pocket)}</span>}
+                      </div>
+                    </div>
                   </div>
                 ))
               ) : (
@@ -434,10 +565,16 @@ export default function GroupRoom() {
             </div>
             <div className="space-y-2">
               {Object.entries(monthlyStats.breakdown).length > 0 ? (
-                Object.entries(monthlyStats.breakdown).map(([uid, amt]) => (
+                Object.entries(monthlyStats.breakdown).map(([uid, stats]) => (
                   <div key={uid} className="flex justify-between items-center text-sm">
                     <span className="text-muted">{uid === user.id ? 'You' : (memberProfiles[uid] || 'Member')}</span>
-                    <span className="font-medium">{fmt(amt)}</span>
+                    <div className="text-right">
+                      <span className="font-bold block">{fmt(stats.total)}</span>
+                      <div className="flex gap-2 text-[9px] font-bold justify-end opacity-70">
+                        {stats.pool > 0 && <span className="text-orange-400">Pool: {fmt(stats.pool)}</span>}
+                        {stats.pocket > 0 && <span className="text-blue-400">Pocket: {fmt(stats.pocket)}</span>}
+                      </div>
+                    </div>
                   </div>
                 ))
               ) : (
@@ -448,60 +585,92 @@ export default function GroupRoom() {
         </div>
       </div>
 
-      {/* ── Expenses list ──────────────────────────────────── */}
       <div className="glass rounded-2xl overflow-hidden animate-slide-up" style={{ animationDelay: '0.3s' }}>
-        <div className="px-5 py-3 border-b border-white/5 bg-white/[0.02]">
-          <h3 className="text-sm font-bold text-muted uppercase tracking-wider">All Expenses</h3>
+        <div className="px-5 py-3 border-b border-white/5 bg-white/[0.02] flex justify-between items-center">
+          <h3 className="text-sm font-bold text-muted uppercase tracking-wider">Group Ledger</h3>
+          <div className="flex gap-2">
+             <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-muted flex items-center gap-1">
+               <History size={10} /> History
+             </span>
+          </div>
         </div>
-        {expenses.length === 0 ? (
+        {expenses.length === 0 && contributions.length === 0 ? (
           <EmptyState 
             icon={DollarSign}
-            title="No group expenses"
-            message="No one has added any expenses to this group yet. Start the tracking!"
+            title="No activity yet"
+            message="No expenses or contributions recorded for this group."
             actionLabel="Add Expense"
             onAction={() => setShowModal(true)}
           />
         ) : (
           <div className="divide-y divide-white/5">
-            {expenses.map(exp => {
-              if (!exp) return null;
-              const isOwn = exp.added_by === user?.id;
-              return (
-                <div key={exp.id} className="flex items-center gap-3 px-5 py-3.5 hover:bg-white/5 transition-colors group">
-                  <div className={`p-2.5 rounded-xl flex-shrink-0 ${isOwn ? 'bg-primary/10 text-primary' : 'bg-blue-500/10 text-blue-400'}`}>
-                    <TrendingDown size={15} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-semibold truncate">{exp.description || exp.category}</p>
-                      <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-tighter ${isOwn ? 'bg-primary/20 text-primary' : 'bg-blue-500/20 text-blue-400'}`}>
-                        Paid by {isOwn ? 'You' : (memberProfiles[exp.added_by] || 'Member')}
-                      </span>
+            {[...expenses, ...contributions]
+              .sort((a, b) => new Date(b.date) - new Date(a.date))
+              .map(item => {
+                if (!item) return null;
+                const isExpense = 'payment_source' in item;
+                const isOwn = isExpense ? (item.added_by === user?.id) : (item.created_by === user?.id);
+                
+                return (
+                  <div key={item.id} className="flex items-center gap-3 px-5 py-4 hover:bg-white/5 transition-colors group">
+                    <div className={`p-2.5 rounded-xl flex-shrink-0 ${isExpense ? 'bg-red-500/10 text-red-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
+                      {isExpense ? <TrendingDown size={15} /> : <DollarSign size={15} />}
                     </div>
-                    <p className="text-xs text-muted">
-                      {exp.category} · {new Date(exp.date || Date.now()).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })}
-                      {exp.is_split && (
-                        <span className="ml-2 px-1.5 py-0.5 bg-white/5 text-muted rounded text-[10px] font-medium">
-                          Split among {exp.split_members?.length || members.length}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-semibold truncate">
+                          {isExpense ? (item.description || item.category) : `Received from ${memberProfiles[item.user_id] || 'Member'}`}
+                        </p>
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-tighter ${isExpense ? (item.payment_source === 'group_fund' ? 'bg-orange-500/20 text-orange-400' : 'bg-blue-500/20 text-blue-400') : 'bg-emerald-500/20 text-emerald-400'}`}>
+                          {isExpense ? (item.payment_source === 'group_fund' ? 'Pool Expense' : 'Personal Pay') : 'Contribution'}
                         </span>
+                      </div>
+                      <p className="text-xs text-muted">
+                        {isExpense ? item.category : (item.note || 'No note')} · {new Date(item.date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })}
+                        {isExpense && item.is_split && (
+                          <span className="ml-2 px-1.5 py-0.5 bg-white/5 text-muted rounded text-[10px] font-medium">Split</span>
+                        )}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      <span className={`text-sm font-bold mr-1 ${isExpense ? 'text-text' : 'text-emerald-400'}`}>
+                        {isExpense ? '-' : '+'}{fmt(item.amount)}
+                      </span>
+                      
+                      {/* Expense Actions (Delete only for now) */}
+                      {isOwn && isExpense && (
+                        <button
+                          onClick={() => handleDeleteExpense(item.id)}
+                          className="p-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                          title="Delete Expense"
+                        >
+                          <Trash2 size={13} />
+                        </button>
                       )}
-                    </p>
+
+                      {/* Contribution Actions (Edit & Delete for Manager) */}
+                      {!isExpense && isManager && (
+                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                          <button
+                            onClick={() => handleEditContribution(item)}
+                            className="p-1.5 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg transition-all"
+                            title="Edit Contribution"
+                          >
+                            <Edit2 size={13} />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteContribution(item.id)}
+                            className="p-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-lg transition-all"
+                            title="Delete Contribution"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    <span className="text-sm font-bold">{fmt(exp.amount)}</span>
-                    {isOwn && (
-                      <button
-                        onClick={() => handleDeleteExpense(exp.id)}
-                        className="p-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-lg transition-all"
-                        title="Delete Expense"
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })}
           </div>
         )}
       </div>
@@ -573,34 +742,66 @@ export default function GroupRoom() {
               <div>
                 <label className="block text-sm font-medium text-muted mb-1.5">Amount *</label>
                 <div className="relative">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted text-sm">₹</span>
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted text-sm font-bold">₹</span>
                   <input type="number" step="0.01" min="0.01" required
                     value={amount} onChange={e => setAmount(e.target.value)}
-                    className="w-full bg-surface border border-white/10 rounded-xl pl-8 pr-4 py-3 text-text focus:outline-none focus:ring-2 focus:ring-primary/50"
+                    className={`w-full bg-surface border ${errors.amount ? 'border-red-500' : 'border-white/10'} rounded-xl pl-8 pr-4 py-3 text-text focus:outline-none focus:ring-2 focus:ring-primary/50`}
                     placeholder="0.00"
                   />
                 </div>
+                {errors.amount && <p className="text-red-500 text-[10px] mt-1 font-medium">{errors.amount}</p>}
               </div>
               <div>
-                <label className="block text-sm font-medium text-muted mb-1.5">Description</label>
-                <input type="text" value={description} onChange={e => setDescription(e.target.value)}
-                  className="w-full bg-surface border border-white/10 rounded-xl px-4 py-3 text-text focus:outline-none focus:ring-2 focus:ring-primary/50"
+                <label className="block text-sm font-medium text-muted mb-1.5">Description *</label>
+                <input type="text" required value={description} onChange={e => setDescription(e.target.value)}
+                  className={`w-full bg-surface border ${errors.description ? 'border-red-500' : 'border-white/10'} rounded-xl px-4 py-3 text-text focus:outline-none focus:ring-2 focus:ring-primary/50`}
                   placeholder="e.g. Lunch at office"
                 />
+                {errors.description && <p className="text-red-500 text-[10px] mt-1 font-medium">{errors.description}</p>}
               </div>
-              <div>
-                <label className="block text-sm font-medium text-muted mb-1.5">Category</label>
-                <select value={category} onChange={e => setCategory(e.target.value)}
-                  className="w-full bg-surface border border-white/10 rounded-xl px-4 py-3 text-text focus:outline-none focus:ring-2 focus:ring-primary/50 appearance-none"
-                >
-                  {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-muted mb-1.5">Category</label>
+                  <select value={category} onChange={e => setCategory(e.target.value)}
+                    className="w-full bg-surface border border-white/10 rounded-xl px-4 py-3 text-text focus:outline-none focus:ring-2 focus:ring-primary/50 appearance-none"
+                  >
+                    {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-muted mb-1.5">Date</label>
+                  <input type="date" required value={date} onChange={e => setDate(e.target.value)}
+                    className="w-full bg-surface border border-white/10 rounded-xl px-4 py-3 text-text focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  />
+                </div>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-muted mb-1.5">Date</label>
-                <input type="date" required value={date} onChange={e => setDate(e.target.value)}
-                  className="w-full bg-surface border border-white/10 rounded-xl px-4 py-3 text-text focus:outline-none focus:ring-2 focus:ring-primary/50"
-                />
+
+              {/* Payment Source Selection */}
+              <div className="p-4 bg-white/[0.02] border border-white/5 rounded-2xl space-y-3">
+                <p className="text-[10px] text-muted font-bold uppercase tracking-widest flex items-center gap-1">
+                  <Info size={10} /> How was this paid?
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPaymentSource('group_fund')}
+                    className={`flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold transition-all border ${paymentSource === 'group_fund' ? 'bg-primary/20 border-primary text-primary shadow-lg shadow-primary/10' : 'bg-surface border-white/5 text-muted hover:border-white/10'}`}
+                  >
+                    <Wallet size={14} /> Group Pool
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPaymentSource('personal_pocket')}
+                    className={`flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold transition-all border ${paymentSource === 'personal_pocket' ? 'bg-blue-500/20 border-blue-500 text-blue-400 shadow-lg shadow-blue-500/10' : 'bg-surface border-white/5 text-muted hover:border-white/10'}`}
+                  >
+                    <DollarSign size={14} /> My Pocket
+                  </button>
+                </div>
+                <p className="text-[10px] text-muted italic">
+                  {paymentSource === 'group_fund' 
+                    ? "Deducted from the central pool balance." 
+                    : "Tracked as your contribution to the group."}
+                </p>
               </div>
 
               {/* Split Option */}
@@ -722,6 +923,20 @@ export default function GroupRoom() {
           </div>
         </div>
       )}
+      {/* ── Add Contribution Modal ── */}
+      <AddContributionModal
+        isOpen={showContributionModal}
+        onClose={() => {
+          setShowContributionModal(false);
+          setEditContribution(null);
+        }}
+        groupId={groupId}
+        members={members}
+        memberProfiles={memberProfiles}
+        managerId={user.id}
+        editItem={editContribution}
+        onContributionAdded={fetchGroupData}
+      />
     </div>
   );
 }
