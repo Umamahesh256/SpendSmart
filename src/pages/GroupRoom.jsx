@@ -327,6 +327,26 @@ export default function GroupRoom() {
     }
   };
 
+  // ── Delete expense ────────────────────────────────────────
+  const handleDeleteExpense = async (id) => {
+    if (!confirm('Delete this expense?')) return;
+    try {
+      const { error } = await supabase
+        .from('group_expenses')
+        .delete()
+        .eq('id', id)
+        .eq('added_by', user.id);
+
+      if (error) throw error;
+      toast.success('Expense deleted');
+      fetchGroupData();
+    } catch (err) {
+      toast.error('Failed to delete expense');
+      console.error(err);
+    }
+  };
+
+
   // ── Leave Group ───────────────────────────────────────────
   const handleLeaveGroup = async () => {
     if (!confirm('Are you sure you want to leave this group?')) return;
@@ -641,7 +661,7 @@ export default function GroupRoom() {
                       {isOwn && isExpense && (
                         <button
                           onClick={() => handleDeleteExpense(item.id)}
-                          className="p-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                          className="p-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-lg transition-all"
                           title="Delete Expense"
                         >
                           <Trash2 size={13} />
@@ -650,7 +670,7 @@ export default function GroupRoom() {
 
                       {/* Contribution Actions (Edit & Delete for Manager) */}
                       {!isExpense && isManager && (
-                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                        <div className="flex gap-1 transition-all">
                           <button
                             onClick={() => handleEditContribution(item)}
                             className="p-1.5 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg transition-all"
