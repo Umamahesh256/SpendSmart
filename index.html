@@ -16,11 +16,26 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      // Fix for "TrustedHTML" assignment error in production (Trusted Types enforcement)
+      if (window.trustedTypes && window.trustedTypes.createPolicy) {
+        try {
+          window.trustedTypes.createPolicy('default', {
+            createHTML: (string) => string,
+            createScriptURL: (string) => string,
+            createScript: (string) => string,
+          });
+          console.log('Trusted Types Policy created successfully');
+        } catch (e) {
+          console.error('Failed to create Trusted Types Policy:', e);
+        }
+      }
+    </script>
     <script type="module" src="/src/main.jsx"></script>
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js');
+          navigator.serviceWorker.register('/sw.js').catch(err => console.error('SW registration failed:', err));
         });
       }
     </script>
