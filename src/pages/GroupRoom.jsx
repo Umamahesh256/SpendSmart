@@ -334,8 +334,7 @@ export default function GroupRoom() {
       const { error } = await supabase
         .from('group_expenses')
         .delete()
-        .eq('id', id)
-        .eq('added_by', user.id);
+        .eq('id', id);
 
       if (error) throw error;
       toast.success('Expense deleted');
@@ -658,7 +657,7 @@ export default function GroupRoom() {
                       </span>
                       
                       {/* Expense Actions (Delete only for now) */}
-                      {isOwn && isExpense && (
+                      {(isOwn || isManager) && isExpense && (
                         <button
                           onClick={() => handleDeleteExpense(item.id)}
                           className="p-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-lg transition-all"

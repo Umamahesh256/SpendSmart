@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { Mail, Loader2, ArrowLeft, KeyRound } from 'lucide-react';
@@ -8,19 +8,34 @@ const ForgotPassword = () => {
   const [email, setEmail] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSent, setIsSent] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
   const { resetPassword } = useAuth();
 
+  useEffect(() => {
+    if (cooldown > 0) {
+      const timer = setTimeout(() => setCooldown(cooldown - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [cooldown]);
+
   const handleResetRequest = async (e) => {
-    e.preventDefault();
+    if (e) e.preventDefault();
+    if (cooldown > 0) return;
     setIsSubmitting(true);
 
     try {
       const { error } = await resetPassword(email);
       if (error) throw error;
       setIsSent(true);
+      setCooldown(60);
       toast.success('Reset link sent to your email!');
     } catch (err) {
       toast.error(err.message);
+      if (err.status === 429 || err.message?.toLowerCase().includes('rate limit')) {
+        setCooldown(60);
+      } else {
+        setCooldown(10); // Standard brief cooldown
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -63,10 +78,16 @@ const ForgotPassword = () => {
 
                 <button
                   type="submit"
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || cooldown > 0}
                   className="w-full py-4 bg-primary hover:bg-emerald-400 text-white rounded-2xl font-bold shadow-lg shadow-primary/20 transition-all active:scale-[0.98] disabled:opacity-50"
                 >
-                  {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> : 'Send Reset Link'}
+                  {isSubmitting ? (
+                    <Loader2 className="w-5 h-5 animate-spin mx-auto" />
+                  ) : cooldown > 0 ? (
+                    `Resubmit in ${cooldown}s`
+                  ) : (
+                    'Send Reset Link'
+                  )}
                 </button>
               </form>
             </>
@@ -79,7 +100,14 @@ const ForgotPassword = () => {
                 </p>
               </div>
               <p className="text-sm text-muted">
-                Didn't receive the email? <button onClick={handleResetRequest} className="text-primary hover:underline font-medium">Click to resend</button>
+                Didn't receive the email?{' '}
+                <button
+                  disabled={cooldown > 0}
+                  onClick={handleResetRequest}
+                  className="text-primary hover:underline font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {cooldown > 0 ? `Resend in ${cooldown}s` : 'Click to resend'}
+                </button>
               </p>
             </div>
           )}

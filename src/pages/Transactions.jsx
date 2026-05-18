@@ -170,7 +170,7 @@ export default function Transactions() {
                     {tx.type === 'income' ? '+' : '-'}{fmt(tx.amount)}
                   </span>
                   {/* Edit/Delete — always visible */}
-                  <div className="flex gap-1 transition-opacity">
+                  <div className="flex gap-1 transition-opacity flex-shrink-0">
                     <button
                       onClick={() => handleEdit(tx)}
                       className="p-1.5 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg transition-colors"

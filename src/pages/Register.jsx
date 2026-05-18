@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { Wallet, Loader2 } from 'lucide-react';
@@ -13,6 +13,8 @@ const Register = () => {
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   
+  const [cooldown, setCooldown] = useState(0);
+  
   const { signUp } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -23,9 +25,18 @@ const Register = () => {
     if (emailParam) setEmail(emailParam);
   });
 
+  useEffect(() => {
+    if (cooldown > 0) {
+      const timer = setTimeout(() => setCooldown(cooldown - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [cooldown]);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+
+    if (cooldown > 0) return;
 
     if (password !== confirmPassword) {
       return toast.error('Passwords do not match');
@@ -38,14 +49,27 @@ const Register = () => {
     setIsSubmitting(true);
 
     try {
-      const { error } = await signUp(email, password, fullName);
+      const { data, error } = await signUp(email, password, fullName);
       if (error) throw error;
       
-      toast.success('Account created successfully!');
-      const redirectTo = searchParams.get('redirect') || '/dashboard';
-      navigate(redirectTo);
+      if (data?.session) {
+        toast.success('Account created successfully!');
+        const redirectTo = searchParams.get('redirect') || '/dashboard';
+        navigate(redirectTo);
+      } else {
+        toast.success('Verification email sent! Please check your inbox to confirm your account.', {
+          duration: 6000
+        });
+        setCooldown(60); // Protect against duplicate signup submissions
+        navigate('/login');
+      }
     } catch (err) {
       toast.error(err.message);
+      if (err.status === 429 || err.message?.toLowerCase().includes('rate limit')) {
+        setCooldown(60);
+      } else {
+        setCooldown(10); // Standard brief cooldown to prevent duplicate submissions on other errors
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -157,10 +181,16 @@ const Register = () => {
 
                 <button
                   type="submit"
-                  disabled={isSubmitting}
-                  className="w-full py-4 bg-primary hover:bg-emerald-400 text-white rounded-2xl font-bold shadow-lg shadow-primary/20 transition-all active:scale-[0.98] disabled:opacity-50 mt-4"
+                  disabled={isSubmitting || cooldown > 0}
+                  className="w-full py-4 bg-primary hover:bg-emerald-400 text-white rounded-2xl font-bold shadow-lg shadow-primary/20 transition-all active:scale-[0.98] disabled:opacity-50 mt-4 flex items-center justify-center gap-2"
                 >
-                  {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> : 'Create Account'}
+                  {isSubmitting ? (
+                    <Loader2 className="w-5 h-5 animate-spin mx-auto" />
+                  ) : cooldown > 0 ? (
+                    `Resubmit in ${cooldown}s`
+                  ) : (
+                    'Create Account'
+                  )}
                 </button>
               </form>
               

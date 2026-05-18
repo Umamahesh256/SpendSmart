@@ -17,6 +17,7 @@ import InviteAccept from './pages/InviteAccept';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
 import HelpModal from './components/HelpModal';
+import AuthRedirectHandler from './components/AuthRedirectHandler';
 import { useState, useEffect } from 'react';
 
 function App() {
@@ -31,6 +32,7 @@ function App() {
 
   return (
     <AuthProvider>
+      <AuthRedirectHandler />
       <Toaster position="top-center" toastOptions={{
         className: 'glass !bg-surface !text-text !border-white/10 !rounded-xl !shadow-2xl',
         duration: 3000,

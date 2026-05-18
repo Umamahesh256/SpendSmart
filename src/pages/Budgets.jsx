@@ -152,11 +152,11 @@ export default function Budgets() {
                     <h3 className="font-semibold capitalize">{budget.category}</h3>
                     <p className="text-xs text-muted mt-0.5">{fmt(remaining)} remaining</p>
                   </div>
-                  <div className="flex gap-1.5">
-                    <button onClick={() => handleOpenModal(budget)} className="p-1.5 bg-surface hover:bg-primary/20 text-muted hover:text-primary rounded-lg transition-colors">
+                  <div className="flex gap-1.5 flex-shrink-0">
+                    <button onClick={() => handleOpenModal(budget)} className="p-1.5 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg transition-colors">
                       <Pencil size={13} />
                     </button>
-                    <button onClick={() => handleDelete(budget.id)} className="p-1.5 bg-surface hover:bg-red-500/20 text-muted hover:text-red-500 rounded-lg transition-colors">
+                    <button onClick={() => handleDelete(budget.id)} className="p-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-lg transition-colors">
                       <Trash2 size={13} />
                     </button>
                   </div>
