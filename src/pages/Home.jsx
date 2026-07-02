@@ -437,7 +437,7 @@ function LandingPage() {
               </div>
             </div>
             <div className="flex-1 w-full relative z-10">
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height={300}>
                 <LineChart data={LINE_DATA}>
                   <Line type="monotone" dataKey="v" stroke="#3b82f6" strokeWidth={4} dot={false} />
                 </LineChart>

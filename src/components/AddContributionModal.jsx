@@ -4,9 +4,9 @@ import { toast } from 'react-hot-toast';
 import { contributionSchema } from '../lib/groupLedger';
 import { supabase } from '../lib/supabase';
 
-export default function AddContributionModal({ isOpen, onClose, groupId, members, memberProfiles, onContributionAdded, managerId, editItem = null }) {
+export default function AddContributionModal({ isOpen, onClose, groupId, members, memberProfiles, onContributionAdded, managerId, editItem = null, onAddGuest }) {
   const [formData, setFormData] = useState({
-    user_id: '',
+    member_id: '',
     amount: '',
     date: new Date().toISOString().split('T')[0],
     note: ''
@@ -17,14 +17,14 @@ export default function AddContributionModal({ isOpen, onClose, groupId, members
   useEffect(() => {
     if (editItem) {
       setFormData({
-        user_id: editItem.user_id,
+        member_id: editItem.member_id,
         amount: editItem.amount.toString(),
         date: editItem.date,
         note: editItem.note || ''
       });
     } else {
       setFormData({
-        user_id: '',
+        member_id: '',
         amount: '',
         date: new Date().toISOString().split('T')[0],
         note: ''
@@ -106,18 +106,26 @@ export default function AddContributionModal({ isOpen, onClose, groupId, members
             </label>
             <select
               required
-              value={formData.user_id}
-              onChange={e => setFormData({ ...formData, user_id: e.target.value })}
-              className={`w-full bg-surface border ${errors.user_id ? 'border-red-500' : 'border-white/10'} rounded-xl px-4 py-3 text-text focus:outline-none focus:ring-2 focus:ring-primary/50 appearance-none`}
+              value={formData.member_id}
+              onChange={e => {
+                if (e.target.value === 'ADD_GUEST') {
+                  onAddGuest();
+                  setFormData({ ...formData, member_id: '' });
+                } else {
+                  setFormData({ ...formData, member_id: e.target.value });
+                }
+              }}
+              className={`w-full bg-surface border ${errors.member_id ? 'border-red-500' : 'border-white/10'} rounded-xl px-4 py-3 text-text focus:outline-none focus:ring-2 focus:ring-primary/50 appearance-none`}
             >
               <option value="">Select a member</option>
               {members.map(m => (
-                <option key={m.user_id} value={m.user_id}>
-                  {memberProfiles[m.user_id] || 'Member'}
+                <option key={m.id} value={m.id}>
+                  {memberProfiles[m.id] || 'Member'}
                 </option>
               ))}
+              <option value="ADD_GUEST" className="font-bold text-primary">+ Add Guest</option>
             </select>
-            {errors.user_id && <p className="text-red-500 text-[10px] mt-1 font-medium">{errors.user_id}</p>}
+            {errors.member_id && <p className="text-red-500 text-[10px] mt-1 font-medium">{errors.member_id}</p>}
           </div>
 
           {/* Amount */}

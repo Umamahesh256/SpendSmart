@@ -375,7 +375,7 @@ export default function Dashboard() {
               </h3>
               <div className="flex flex-col sm:flex-row items-center gap-8">
                 <div className="w-32 h-32 flex-shrink-0 relative">
-                  <ResponsiveContainer width="100%" height="100%">
+                  <ResponsiveContainer width="100%" height={300}>
                     <PieChart>
                       <Pie
                         data={categoryData}

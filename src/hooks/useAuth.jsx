@@ -62,6 +62,15 @@ export const AuthProvider = ({ children }) => {
     });
   };
 
+  const signInWithOAuth = async (provider) => {
+    return supabase.auth.signInWithOAuth({
+      provider: provider,
+      options: {
+        redirectTo: `${window.location.origin}/dashboard`,
+      }
+    });
+  };
+
   const value = {
     session,
     user,
@@ -70,6 +79,7 @@ export const AuthProvider = ({ children }) => {
     signOut,
     resetPassword,
     updatePassword,
+    signInWithOAuth,
     loading
   };
 

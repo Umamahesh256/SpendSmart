@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../hooks/useAuth';
 import AddTransactionModal from '../components/AddTransactionModal';
 import EmptyState from '../components/EmptyState';
+import DeleteConfirmModal from '../components/DeleteConfirmModal';
 import { Plus, Search, Pencil, Trash2, ArrowRightLeft, TrendingDown, TrendingUp } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 
@@ -14,6 +15,9 @@ export default function Transactions() {
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [transactionToEdit, setTransactionToEdit] = useState(null);
+
+  const [deleteConfirmId, setDeleteConfirmId] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const [filterType, setFilterType] = useState('all');
   const [searchCategory, setSearchCategory] = useState('');
@@ -47,12 +51,22 @@ export default function Transactions() {
   }, [user]);
 
   const handleDelete = async (id) => {
-    if (!confirm('Delete this transaction?')) return;
-    const { error } = await supabase.from('transactions').delete().eq('id', id);
-    if (error) {
-      toast.error('Failed to delete transaction');
-    } else {
+    setDeleteConfirmId(id);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteConfirmId) return;
+    setIsDeleting(true);
+    
+    try {
+      const { error } = await supabase.from('transactions').delete().eq('id', deleteConfirmId);
+      if (error) throw error;
       toast.success('Transaction deleted');
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setIsDeleting(false);
+      setDeleteConfirmId(null);
     }
   };
 
@@ -143,53 +157,111 @@ export default function Transactions() {
             onAction={!searchCategory ? handleOpenNew : null}
           />
         ) : (
-          <div className="divide-y divide-white/5">
-            {filtered.map(tx => (
-              <div
-                key={tx.id}
-                className="group flex items-center gap-3 px-4 py-3.5 hover:bg-white/5 transition-colors"
-              >
-                {/* Icon */}
-                <div className={`p-2.5 rounded-xl flex-shrink-0 ${tx.type === 'income' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'}`}>
-                  {tx.type === 'income' ? <TrendingUp size={17} /> : <TrendingDown size={17} />}
-                </div>
+          <>
+            {/* Desktop Table View */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-white/5 bg-white/[0.02]">
+                    <th className="px-6 py-4 text-xs font-bold text-muted uppercase tracking-wider font-sans">Type</th>
+                    <th className="px-6 py-4 text-xs font-bold text-muted uppercase tracking-wider font-sans">Category</th>
+                    <th className="px-6 py-4 text-xs font-bold text-muted uppercase tracking-wider font-sans">Date</th>
+                    <th className="px-6 py-4 text-xs font-bold text-muted uppercase tracking-wider font-sans">Note</th>
+                    <th className="px-6 py-4 text-xs font-bold text-muted uppercase tracking-wider text-right font-sans">Amount</th>
+                    <th className="px-6 py-4 text-xs font-bold text-muted uppercase tracking-wider text-right font-sans">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {filtered.map(tx => (
+                    <tr key={tx.id} className="hover:bg-white/5 transition-colors group">
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className={`inline-flex p-2 rounded-xl ${tx.type === 'income' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'}`}>
+                          {tx.type === 'income' ? <TrendingUp size={16} /> : <TrendingDown size={16} />}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap font-semibold capitalize">{tx.category}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-muted">
+                        {new Date(tx.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-muted max-w-xs truncate">
+                        {tx.note || <span className="opacity-50">—</span>}
+                      </td>
+                      <td className={`px-6 py-4 whitespace-nowrap text-right font-bold ${tx.type === 'income' ? 'text-emerald-500' : 'text-text'}`}>
+                        {tx.type === 'income' ? '+' : '-'}{fmt(tx.amount)}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-right">
+                        <div className="flex gap-1 justify-end opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
+                          <button
+                            onClick={() => handleEdit(tx)}
+                            className="p-1.5 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg transition-colors"
+                            title="Edit Transaction"
+                          >
+                            <Pencil size={14} />
+                          </button>
+                          <button
+                            onClick={() => handleDelete(tx.id)}
+                            className="p-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-lg transition-colors"
+                            title="Delete Transaction"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
 
-                {/* Details */}
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold capitalize truncate">{tx.category}</p>
-                  <p className="text-xs text-muted truncate">
-                    {new Date(tx.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
-                    {tx.payment_method ? ` · ${tx.payment_method}` : ''}
-                    {tx.note ? ` · ${tx.note}` : ''}
-                  </p>
-                </div>
+            {/* Mobile Card View */}
+            <div className="md:hidden divide-y divide-white/5">
+              {filtered.map(tx => (
+                <div
+                  key={tx.id}
+                  className="group flex items-center gap-3 px-4 py-3.5 hover:bg-white/5 transition-colors"
+                >
+                  {/* Icon */}
+                  <div className={`p-2.5 rounded-xl flex-shrink-0 ${tx.type === 'income' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'}`}>
+                    {tx.type === 'income' ? <TrendingUp size={17} /> : <TrendingDown size={17} />}
+                  </div>
 
-                {/* Amount + Actions */}
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <span className={`text-sm font-bold ${tx.type === 'income' ? 'text-emerald-500' : 'text-text'}`}>
-                    {tx.type === 'income' ? '+' : '-'}{fmt(tx.amount)}
-                  </span>
-                  {/* Edit/Delete — always visible */}
-                  <div className="flex gap-1 transition-opacity flex-shrink-0">
-                    <button
-                      onClick={() => handleEdit(tx)}
-                      className="p-1.5 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg transition-colors"
-                      title="Edit Transaction"
-                    >
-                      <Pencil size={14} />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(tx.id)}
-                      className="p-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-lg transition-colors"
-                      title="Delete Transaction"
-                    >
-                      <Trash2 size={14} />
-                    </button>
+                  {/* Details */}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold capitalize truncate">{tx.category}</p>
+                    <p className="text-xs text-muted truncate">
+                      {new Date(tx.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                      {tx.payment_method ? ` · ${tx.payment_method}` : ''}
+                      {tx.note ? ` · ${tx.note}` : ''}
+                    </p>
+                  </div>
+
+                  {/* Amount + Actions */}
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <span className={`text-sm font-bold ${tx.type === 'income' ? 'text-emerald-500' : 'text-text'}`}>
+                      {tx.type === 'income' ? '+' : '-'}{fmt(tx.amount)}
+                    </span>
+                    {/* Edit/Delete — always visible on mobile */}
+                    <div className="flex gap-1 transition-opacity flex-shrink-0 opacity-100 lg:opacity-0 lg:group-hover:opacity-100">
+                      <button
+                        onClick={() => handleEdit(tx)}
+                        className="p-1.5 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg transition-colors"
+                        title="Edit Transaction"
+                      >
+                        <Pencil size={14} />
+                      </button>
+                      <button
+                        onClick={() => handleDelete(tx.id)}
+                        className="p-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-lg transition-colors"
+                        title="Delete Transaction"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          </>
         )}
       </div>
 
@@ -197,6 +269,12 @@ export default function Transactions() {
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         transactionToEdit={transactionToEdit}
+      />
+      <DeleteConfirmModal
+        isOpen={!!deleteConfirmId}
+        onClose={() => setDeleteConfirmId(null)}
+        onConfirm={confirmDelete}
+        isDeleting={isDeleting}
       />
     </div>
   );
