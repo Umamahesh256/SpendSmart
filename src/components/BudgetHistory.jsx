@@ -7,7 +7,7 @@ const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 
 /**
  * BudgetHistory — Browse previous months' financial data
  */
-export default function BudgetHistory({ allBudgets, allContributions, allExpenses, allMemberBudgets, members, memberProfiles, fmt }) {
+export default function BudgetHistory({ allBudgets, allContributions, allExpenses, allMemberBudgets, members, memberProfiles, fmt, carryForwards = [] }) {
   const now = new Date();
   const [viewMonth, setViewMonth] = useState(now.getMonth() + 1);
   const [viewYear, setViewYear] = useState(now.getFullYear());
@@ -18,6 +18,14 @@ export default function BudgetHistory({ allBudgets, allContributions, allExpense
   };
   
   const goForward = () => {
+    const currentMonth = now.getMonth() + 1;
+    const currentYear = now.getFullYear();
+    
+    // Prevent navigating into future months
+    if (viewYear > currentYear || (viewYear === currentYear && viewMonth >= currentMonth)) {
+      return;
+    }
+
     if (viewMonth === 12) { setViewMonth(1); setViewYear(viewYear + 1); }
     else setViewMonth(viewMonth + 1);
   };
@@ -31,7 +39,7 @@ export default function BudgetHistory({ allBudgets, allContributions, allExpense
   const personalPayments = calculatePersonalPayments(allExpenses, viewMonth, viewYear);
   
   const budgetMemberBudgets = allMemberBudgets.filter(mb => mb.group_budget_id === budget?.id);
-  const memberBalances = calculateMemberBalances(members, allContributions, budgetMemberBudgets, allExpenses, viewMonth, viewYear);
+  const memberBalances = calculateMemberBalances(members, allContributions, budgetMemberBudgets, allExpenses, carryForwards, viewMonth, viewYear);
 
   const STATUS_COLORS = {
     settled: 'text-emerald-400 bg-emerald-500/10',

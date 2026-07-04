@@ -62,6 +62,7 @@ export default function Transactions() {
       const { error } = await supabase.from('transactions').delete().eq('id', deleteConfirmId);
       if (error) throw error;
       toast.success('Transaction deleted');
+      fetchTransactions(); // INSTANT UPDATE
     } catch (err) {
       toast.error(err.message);
     } finally {
@@ -269,6 +270,7 @@ export default function Transactions() {
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         transactionToEdit={transactionToEdit}
+        onSaved={fetchTransactions}
       />
       <DeleteConfirmModal
         isOpen={!!deleteConfirmId}

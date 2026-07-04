@@ -131,11 +131,18 @@ export const calculateGroupBudgetStats = (expenses = [], groupBudget, month, yea
  * @param {Array} contributions - group_contributions rows
  * @param {Array} memberBudgets - member_budgets rows for current month
  * @param {Array} expenses - group_expenses rows
+ * @param {Array} carryForwards - budget_carry_forwards rows
  * @param {number} month (1-12)
  * @param {number} year
  * @returns {Array<{ memberId, target, paid, pending, overpaid, personalSpending, status }>}
  */
-export const calculateMemberBalances = (members = [], contributions = [], memberBudgets = [], expenses = [], month, year) => {
+export const calculateMemberBalances = (members = [], contributions = [], memberBudgets = [], expenses = [], carryForwards = [], month, year) => {
+  if (typeof carryForwards === 'number') {
+    year = month;
+    month = carryForwards;
+    carryForwards = [];
+  }
+  if (!Array.isArray(carryForwards)) carryForwards = [];
   const prefix = `${year}-${String(month).padStart(2, '0')}`;
   
   // Filter contributions and expenses to the target month
@@ -147,17 +154,38 @@ export const calculateMemberBalances = (members = [], contributions = [], member
     const mb = memberBudgets.find(b => b.member_id === m.id);
     const target = mb ? parseFloat(mb.target_amount) || 0 : 0;
 
-    // Sum their contributions for the month
-    const paid = monthContributions
-      .filter(c => c.member_id === m.id)
-      .reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
+    // Sum their contributions for the month (or use manual_paid override if set)
+    let paid = 0;
+    if (mb && mb.manual_paid != null) {
+      paid = parseFloat(mb.manual_paid) || 0;
+    } else {
+      paid = monthContributions
+        .filter(c => c.member_id === m.id)
+        .reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
+        
+      // Add incoming carry forwards only if not manually overridden
+      const incomingCF = carryForwards
+        .filter(cf => cf.member_id === m.id && cf.to_month === month && cf.to_year === year && cf.status === 'active')
+        .reduce((sum, cf) => sum + (parseFloat(cf.original_amount) || 0), 0);
+      paid += incomingCF;
+    }
+
+    // Deduct outgoing carry forwards
+    const outgoingCF = carryForwards
+      .filter(cf => cf.member_id === m.id && cf.from_month === month && cf.from_year === year && cf.status === 'active')
+      .reduce((sum, cf) => sum + (parseFloat(cf.original_amount) || 0), 0);
 
     // Sum their personal spending for the month
     const personalSpending = monthExpenses
       .filter(e => e.paid_by_member_id === m.id && e.payment_source === 'personal_pocket')
       .reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
 
-    const diff = paid - target;
+    let diff = paid - target;
+    // Deduct the carry forward from the surplus difference
+    if (diff > 0) {
+      diff -= outgoingCF;
+    }
+
     const pending = diff < 0 ? Math.abs(diff) : 0;
     const overpaid = diff > 0 ? diff : 0;
 

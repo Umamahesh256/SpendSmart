@@ -16,8 +16,8 @@ export default function GroupBudgetModal({ isOpen, onClose, groupId, members, me
   const [customAmounts, setCustomAmounts] = useState({});
   const [loading, setLoading] = useState(false);
 
-  // Non-guest members for allocation
-  const allocatableMembers = members.filter(m => !m.is_guest);
+  // Non-guest members for allocation (wait, user wants guests too)
+  const allocatableMembers = members;
 
   useEffect(() => {
     if (existingBudget) {

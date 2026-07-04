@@ -3,12 +3,12 @@ import { Wallet, DollarSign, TrendingDown, ArrowUpCircle, ArrowDownCircle, Piggy
 /**
  * GroupFinanceSummary — Shows Budget, Fund Pool, and Personal Payments for a month
  */
-export default function GroupFinanceSummary({ budgetStats, poolStats, personalPayments, memberProfiles, fmt, manualBalance, isManager, onUpdateBalance }) {
+export default function GroupFinanceSummary({ budgetStats, poolStats, personalPayments, memberProfiles, fmt, manualBalance, isManager, onUpdateBalance, onAddBudget }) {
   return (
     <div className="space-y-4 animate-slide-up" style={{ animationDelay: '0.1s' }}>
       
       {/* ── Monthly Budget Card ───────────────────────────── */}
-      {budgetStats && (
+      {budgetStats ? (
         <div className="glass p-5 rounded-3xl bg-white/[0.02] border border-white/5">
           <div className="flex justify-between items-center mb-4">
             <div className="flex items-center gap-2">
@@ -47,6 +47,22 @@ export default function GroupFinanceSummary({ budgetStats, poolStats, personalPa
               </p>
             </div>
           </div>
+        </div>
+      ) : (
+        <div className="glass p-5 rounded-3xl bg-white/[0.02] border border-white/5 flex flex-col items-center justify-center text-center">
+          <div className="p-3 bg-violet-500/10 rounded-full text-violet-400 mb-3">
+            <PiggyBank size={24} />
+          </div>
+          <h4 className="font-bold text-text mb-1">No Budget Set</h4>
+          <p className="text-xs text-muted mb-4">Set a group budget for this month to track spending.</p>
+          {isManager && (
+            <button 
+              onClick={onAddBudget}
+              className="px-4 py-2 bg-violet-500/20 text-violet-400 hover:bg-violet-500/30 rounded-xl text-sm font-bold transition-colors"
+            >
+              Create Budget
+            </button>
+          )}
         </div>
       )}
 

@@ -4,15 +4,21 @@ import { toast } from 'react-hot-toast';
 import { contributionSchema } from '../lib/groupLedger';
 import { supabase } from '../lib/supabase';
 
-export default function AddContributionModal({ isOpen, onClose, groupId, members, memberProfiles, onContributionAdded, managerId, editItem = null, onAddGuest }) {
+export default function AddContributionModal({ isOpen, onClose, groupId, members, memberProfiles, onContributionAdded, managerId, editItem = null, onAddGuest, memberDues = [] }) {
   const [formData, setFormData] = useState({
     member_id: '',
     amount: '',
     date: new Date().toISOString().split('T')[0],
-    note: ''
+    note: '',
+    member_due_id: ''
   });
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState({});
+
+  // Filter dues for selected member
+  const outstandingDues = formData.member_id 
+    ? memberDues.filter(d => d.member_id === formData.member_id && d.status !== 'Paid')
+    : [];
 
   useEffect(() => {
     if (editItem) {
@@ -20,14 +26,16 @@ export default function AddContributionModal({ isOpen, onClose, groupId, members
         member_id: editItem.member_id,
         amount: editItem.amount.toString(),
         date: editItem.date,
-        note: editItem.note || ''
+        note: editItem.note || '',
+        member_due_id: editItem.member_due_id || ''
       });
     } else {
       setFormData({
         member_id: '',
         amount: '',
         date: new Date().toISOString().split('T')[0],
-        note: ''
+        note: '',
+        member_due_id: ''
       });
     }
   }, [editItem, isOpen]);
@@ -49,6 +57,7 @@ export default function AddContributionModal({ isOpen, onClose, groupId, members
           .from('group_contributions')
           .update({
             ...validatedData,
+            member_due_id: formData.member_due_id || null
           })
           .eq('id', editItem.id);
 
@@ -61,7 +70,8 @@ export default function AddContributionModal({ isOpen, onClose, groupId, members
           .insert([{
             ...validatedData,
             group_id: groupId,
-            created_by: managerId
+            created_by: managerId,
+            member_due_id: formData.member_due_id || null
           }]);
 
         if (error) throw error;
@@ -147,6 +157,40 @@ export default function AddContributionModal({ isOpen, onClose, groupId, members
             </div>
             {errors.amount && <p className="text-red-500 text-[10px] mt-1 font-medium">{errors.amount}</p>}
           </div>
+
+          {/* Member Due Selection (Optional) */}
+          {outstandingDues.length > 0 && (
+            <div className="p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl">
+              <label className="block text-sm font-medium text-blue-400 mb-2 flex items-center gap-2">
+                <FileText size={14} /> Pay Towards Member Due (Optional)
+              </label>
+              <select
+                value={formData.member_due_id}
+                onChange={e => {
+                  const dueId = e.target.value;
+                  const due = outstandingDues.find(d => d.id === dueId);
+                  if (due) {
+                    setFormData(prev => ({ 
+                      ...prev, 
+                      member_due_id: dueId,
+                      amount: due.remaining_amount.toString(),
+                      note: `Payment for ${due.category_name}`
+                    }));
+                  } else {
+                    setFormData(prev => ({ ...prev, member_due_id: '' }));
+                  }
+                }}
+                className="w-full bg-background border border-blue-500/30 rounded-xl px-4 py-2.5 text-sm text-text focus:outline-none focus:ring-2 focus:ring-blue-500/50 appearance-none"
+              >
+                <option value="">-- No, general contribution --</option>
+                {outstandingDues.map(due => (
+                  <option key={due.id} value={due.id}>
+                    {due.category_name} (Owes ₹{due.remaining_amount})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* Date */}
           <div>

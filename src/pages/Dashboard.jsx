@@ -244,6 +244,16 @@ export default function Dashboard() {
       setLoading(false);
     }
     fetchDashboardData();
+
+    const channel = supabase.channel('dashboard-channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions', filter: `user_id=eq.${user.id}` }, () => fetchDashboardData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'group_expenses' }, () => fetchDashboardData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'group_contributions' }, () => fetchDashboardData())
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [user]);
 
   const fmt = (amount) =>

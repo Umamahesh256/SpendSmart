@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import DeleteConfirmModal from '../components/DeleteConfirmModal';
 import { useAuth } from '../hooks/useAuth';
 import { supabase } from '../lib/supabase';
 import { toast } from 'react-hot-toast';
@@ -11,11 +12,19 @@ import GroupBudgetModal from '../components/GroupBudgetModal';
 import GroupFinanceSummary from '../components/GroupFinanceSummary';
 import UpdateBalanceModal from '../components/UpdateBalanceModal';
 import MemberBudgetPanel from '../components/MemberBudgetPanel';
+import UpdateMemberPaidModal from '../components/UpdateMemberPaidModal';
+import GroupDuesPanel from '../components/GroupDuesPanel';
+import MemberDuesPanel from '../components/MemberDuesPanel';
+import CreateDueModal from '../components/CreateDueModal';
+import CreateMemberDueModal from '../components/CreateMemberDueModal';
+import UpdateMemberDueModal from '../components/UpdateMemberDueModal';
+import CarryForwardModal from '../components/CarryForwardModal';
 import BudgetHistory from '../components/BudgetHistory';
+import TransactionDetailsModal from '../components/TransactionDetailsModal';
 import {
   Users, Plus, Trash2, X, ArrowLeft,
   UserPlus, Copy, Check, Share2, Link2, DollarSign, Settings2, Edit2, LogOut, TrendingDown,
-  ArrowUpCircle, ArrowDownCircle, Wallet, History, Info, PiggyBank
+  ArrowUpCircle, ArrowDownCircle, Wallet, History, Info, PiggyBank, ChevronLeft, ChevronRight, Calendar
 } from 'lucide-react';
 
 
@@ -65,6 +74,11 @@ export default function GroupRoom() {
   const [expensePayer, setExpensePayer] = useState('');
   const [showSettings, setShowSettings] = useState(false);
   const [showUpdateBalanceModal, setShowUpdateBalanceModal] = useState(false);
+  const [deleteConfirmId, setDeleteConfirmId] = useState(null);
+  const [deleteConfirmType, setDeleteConfirmType] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [editExpenseId, setEditExpenseId] = useState(null);
+  const [selectedTransaction, setSelectedTransaction] = useState(null);
 
   // Reporting stats
   const [dailyStats, setDailyStats] = useState({ total: 0, breakdown: {} });
@@ -87,6 +101,22 @@ export default function GroupRoom() {
   const [monthlyPoolStats, setMonthlyPoolStats] = useState({ balance: 0, totalInflow: 0, totalOutflow: 0, memberContributions: {} });
   const [personalPayments, setPersonalPayments] = useState({ byMember: {}, total: 0 });
   const [memberBalances, setMemberBalances] = useState([]);
+  const [thisMonthMemberBudgets, setThisMonthMemberBudgets] = useState([]);
+  
+  // Global View Date State
+  const [globalViewMonth, setGlobalViewMonth] = useState(new Date().getMonth() + 1);
+  const [globalViewYear, setGlobalViewYear] = useState(new Date().getFullYear());
+
+  const [carryForwards, setCarryForwards] = useState([]);
+  const [carryForwardData, setCarryForwardData] = useState(null);
+  
+  const [updatePaidData, setUpdatePaidData] = useState(null);
+  
+  const [groupDues, setGroupDues] = useState([]);
+  const [memberDues, setMemberDues] = useState([]);
+  const [showCreateDueModal, setShowCreateDueModal] = useState(false);
+  const [showCreateMemberDueModal, setShowCreateMemberDueModal] = useState(false);
+  const [editMemberDueItem, setEditMemberDueItem] = useState(null);
 
   // Invite panel
   const [showInvite, setShowInvite]         = useState(false);
@@ -135,7 +165,9 @@ export default function GroupRoom() {
   // ── Load group data ───────────────────────────────────────
   const fetchGroupData = useCallback(async () => {
     if (!user || !groupId) return;
-    setLoading(true);
+    
+    // Only show full-page loading spinner on initial load
+    if (!group) setLoading(true);
 
     try {
       const { data: g } = await supabase.from('groups').select('*').eq('id', groupId).single();
@@ -194,8 +226,24 @@ export default function GroupRoom() {
       setIsManager(g.created_by === user.id);
 
       // Budget data fetching
-      const currentMonth = new Date().getMonth() + 1;
-      const currentYear = new Date().getFullYear();
+      const currentMonth = globalViewMonth;
+      const currentYear = globalViewYear;
+
+      const { data: dData } = await supabase
+        .from('group_dues').select('*')
+        .eq('group_id', groupId)
+        .eq('month', currentMonth)
+        .eq('year', currentYear)
+        .order('created_at', { ascending: true });
+      setGroupDues(dData || []);
+
+      const { data: mdData } = await supabase
+        .from('member_dues').select('*')
+        .eq('group_id', groupId)
+        .eq('month', currentMonth)
+        .eq('year', currentYear)
+        .order('created_at', { ascending: true });
+      setMemberDues(mdData || []);
 
       const { data: bData } = await supabase
         .from('group_budgets').select('*')
@@ -214,6 +262,10 @@ export default function GroupRoom() {
       
       const thisMonthMemberBudgets = allMBs.filter(b => b.month === currentMonth && b.year === currentYear);
       setCurrentMemberBudgets(thisMonthMemberBudgets);
+      
+      const { data: cfData } = await supabase.from('budget_carry_forwards').select('*').eq('group_id', groupId);
+      const allCFs = cfData || [];
+      setCarryForwards(allCFs);
 
       // Budget stats calculations
       const monthPool = calculateMonthlyPoolStats(contributionsList, expensesList, currentMonth, currentYear);
@@ -225,7 +277,7 @@ export default function GroupRoom() {
       const pPayments = calculatePersonalPayments(expensesList, currentMonth, currentYear);
       setPersonalPayments(pPayments);
       
-      const mBalances = calculateMemberBalances(mems || [], contributionsList, thisMonthMemberBudgets, expensesList, currentMonth, currentYear);
+      const mBalances = calculateMemberBalances(mems || [], contributionsList, thisMonthMemberBudgets, expensesList, allCFs, currentMonth, currentYear);
       setMemberBalances(mBalances);
 
     } catch (err) {
@@ -234,7 +286,7 @@ export default function GroupRoom() {
     } finally {
       setLoading(false);
     }
-  }, [user, groupId, navigate]);
+  }, [user, groupId, navigate, globalViewMonth, globalViewYear]);
 
   useEffect(() => { fetchGroupData(); }, [fetchGroupData]);
 
@@ -363,21 +415,37 @@ export default function GroupRoom() {
 
       // Zod Validation
       groupExpenseSchema.parse(expenseData);
-
-      const { error } = await supabase.from('group_expenses').insert([{
+      
+      // Determine if the selected category is a Group Due
+      const matchingDue = groupDues.find(d => d.status !== 'Paid' && d.category_name === category);
+      const payload = {
         ...expenseData,
         group_id: groupId,
-        recorded_by: user.id, paid_by_member_id: expensePayer || myMemberId
-      }]);
+        recorded_by: user.id, 
+        paid_by_member_id: expensePayer || myMemberId,
+        group_due_id: matchingDue ? matchingDue.id : null
+      };
 
-      if (error) throw error;
-      toast.success('Expense added!');
+      if (editExpenseId) {
+        const { error } = await supabase.from('group_expenses').update(payload).eq('id', editExpenseId);
+        if (error) throw error;
+        toast.success('Expense updated!');
+      } else {
+        const { error } = await supabase.from('group_expenses').insert([payload]);
+        if (error) throw error;
+        toast.success('Expense added!');
+      }
+      
       setAmount(''); setDescription(''); setCategory(CATEGORIES[0]);
       setDate(new Date().toISOString().split('T')[0]);
       setPaymentSource('personal_pocket');
       setIsSplit(false);
       setSelectedSplitMembers([]);
+      setEditExpenseId(null);
       setShowModal(false);
+      
+      // Refresh to grab updated due balances
+      fetchGroupData();
     } catch (err) {
       if (err.name === 'ZodError') {
         const fieldErrors = {};
@@ -390,50 +458,6 @@ export default function GroupRoom() {
       }
     } finally {
       setFormLoading(false);
-    }
-  };
-
-  // ── Delete expense ────────────────────────────────────────
-  const handleDeleteExpense = async (id) => {
-    if (!confirm('Delete this expense?')) return;
-    try {
-      const { error } = await supabase
-        .from('group_expenses')
-        .delete()
-        .eq('id', id);
-
-      if (error) throw error;
-      toast.success('Expense deleted');
-      fetchGroupData();
-    } catch (err) {
-      toast.error('Failed to delete expense');
-      console.error(err);
-    }
-  };
-
-
-  // ── Leave Group ───────────────────────────────────────────
-  const handleLeaveGroup = async () => {
-    if (!confirm('Are you sure you want to leave this group?')) return;
-    
-    // Check if user is the creator (creator should use Admin Panel to delete)
-    if (group?.created_by === user.id) {
-      return toast.error('As the creator, you must delete the group from the Admin Panel to leave.');
-    }
-
-    try {
-      const { error } = await supabase
-        .from('group_members')
-        .delete()
-        .eq('group_id', groupId)
-        .eq('user_id', user.id);
-
-      if (error) throw error;
-      
-      toast.success('You left the group');
-      navigate('/');
-    } catch (err) {
-      toast.error(err.message);
     }
   };
 
@@ -493,6 +517,65 @@ export default function GroupRoom() {
     .reduce((s, c) => s + (parseFloat(c.amount) || 0), 0);
   const myTotalContribution = myPocketSpending + myPoolContributions;
 
+  // ── Missing Handlers ──────────────────────────────────────
+  const handleEditExpense = (expense) => {
+    setEditExpenseId(expense.id);
+    setAmount(expense.amount);
+    setDescription(expense.description || '');
+    setCategory(expense.category);
+    setDate(expense.date);
+    setPaymentSource(expense.payment_source);
+    setIsSplit(expense.is_split || false);
+    setShowModal(true);
+  };
+
+  const handleDeleteExpense = (id) => {
+    setDeleteConfirmType({ type: 'expense', id });
+  };
+
+  const handleDeleteDue = (id) => {
+    setDeleteConfirmType({ type: 'due', id });
+  };
+
+  const handleDeleteMemberDue = (id) => {
+    setDeleteConfirmType({ type: 'member_due', id });
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteConfirmType) return;
+    setIsDeleting(true);
+    try {
+      const { type, id } = deleteConfirmType;
+      let error = null;
+
+      if (type === 'expense') {
+        const res = await supabase.from('group_expenses').delete().eq('id', id);
+        error = res.error;
+      } else if (type === 'contribution') {
+        const res = await supabase.from('group_contributions').delete().eq('id', id);
+        error = res.error;
+      } else if (type === 'due') {
+        const res = await supabase.from('group_dues').delete().eq('id', id);
+        error = res.error;
+      } else if (type === 'member_due') {
+        const res = await supabase.from('member_dues').delete().eq('id', id);
+        error = res.error;
+      } else if (type === 'member') {
+        const res = await supabase.from('group_members').delete().eq('group_id', groupId).eq('id', id);
+        error = res.error;
+      }
+
+      if (error) throw error;
+      toast.success('Deleted successfully!');
+      fetchGroupData(false);
+    } catch (err) {
+      toast.error(err.message || 'Failed to delete');
+    } finally {
+      setIsDeleting(false);
+      setDeleteConfirmType(null);
+    }
+  };
+
   if (loading) return (
     <div className="flex justify-center items-center h-64">
       <div className="animate-spin text-primary"><Users size={32} /></div>
@@ -549,6 +632,38 @@ export default function GroupRoom() {
           )}
         </div>
       </div>
+      
+      {/* ── Global Month Selector ───────────────────────────── */}
+      <div className="flex items-center justify-between glass p-2 rounded-2xl animate-fade-in border border-white/5">
+        <button 
+          onClick={() => {
+            if (globalViewMonth === 1) { setGlobalViewMonth(12); setGlobalViewYear(globalViewYear - 1); }
+            else setGlobalViewMonth(globalViewMonth - 1);
+          }}
+          className="p-2 hover:bg-white/5 rounded-xl transition-colors"
+        >
+          <ChevronLeft size={20} />
+        </button>
+        
+        <div className="flex items-center gap-2 font-bold text-lg tracking-wide">
+          <Calendar size={18} className="text-primary" />
+          {new Date(globalViewYear, globalViewMonth - 1).toLocaleString('default', { month: 'long', year: 'numeric' })}
+        </div>
+        
+        <button 
+          onClick={() => {
+            const currentM = new Date().getMonth() + 1;
+            const currentY = new Date().getFullYear();
+            if (globalViewYear > currentY || (globalViewYear === currentY && globalViewMonth >= currentM)) return;
+            if (globalViewMonth === 12) { setGlobalViewMonth(1); setGlobalViewYear(globalViewYear + 1); }
+            else setGlobalViewMonth(globalViewMonth + 1);
+          }}
+          disabled={globalViewYear === new Date().getFullYear() && globalViewMonth === new Date().getMonth() + 1}
+          className="p-2 hover:bg-white/5 rounded-xl transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+        >
+          <ChevronRight size={20} />
+        </button>
+      </div>
 
       {/* ── Desktop: 3 Column Layout ── */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -589,6 +704,26 @@ export default function GroupRoom() {
               </div>
             </div>
           </div>
+          
+          <GroupDuesPanel 
+            dues={groupDues} 
+            isManager={isManager} 
+            onCreateDue={() => setShowCreateDueModal(true)} 
+            fmt={fmt} 
+          />
+
+          <MemberDuesPanel 
+            dues={memberDues} 
+            members={members}
+            memberProfiles={memberProfiles}
+            isManager={isManager} 
+            onCreateDue={() => setShowCreateMemberDueModal(true)} 
+            onEditDue={(due) => setEditMemberDueItem(due)}
+            onDeleteDue={(id) => setDeleteConfirmType({ type: 'member_due', id })}
+            fmt={fmt} 
+          />
+
+
         </div>
 
         {/* Middle Column: Ledger */}
@@ -621,23 +756,9 @@ export default function GroupRoom() {
             ) : (
               <div className="divide-y divide-white/5">
                 {(() => {
-                  const now = new Date();
-                  let filteredExpenses = [...expenses];
-                  let filteredContributions = [...contributions];
+                  let filteredExpenses = [...expenses].filter(e => new Date(e.date).getMonth() + 1 === globalViewMonth && new Date(e.date).getFullYear() === globalViewYear);
+                  let filteredContributions = [...contributions].filter(c => new Date(c.date).getMonth() + 1 === globalViewMonth && new Date(c.date).getFullYear() === globalViewYear);
                   
-                  if (ledgerFilter === 'current_month') {
-                    filteredExpenses = filteredExpenses.filter(e => new Date(e.date).getMonth() === now.getMonth() && new Date(e.date).getFullYear() === now.getFullYear());
-                    filteredContributions = filteredContributions.filter(c => new Date(c.date).getMonth() === now.getMonth() && new Date(c.date).getFullYear() === now.getFullYear());
-                  } else if (ledgerFilter === 'last_3_months') {
-                    const threeMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 3, 1);
-                    filteredExpenses = filteredExpenses.filter(e => new Date(e.date) >= threeMonthsAgo);
-                    filteredContributions = filteredContributions.filter(c => new Date(c.date) >= threeMonthsAgo);
-                  } else if (ledgerFilter === 'last_6_months') {
-                    const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6, 1);
-                    filteredExpenses = filteredExpenses.filter(e => new Date(e.date) >= sixMonthsAgo);
-                    filteredContributions = filteredContributions.filter(c => new Date(c.date) >= sixMonthsAgo);
-                  }
-
                   let combined = [...filteredExpenses, ...filteredContributions].sort((a, b) => new Date(b.date) - new Date(a.date));
                   
                   if (ledgerFilter === 'recent') {
@@ -650,7 +771,11 @@ export default function GroupRoom() {
                   const isOwn = isExpense ? (item.paid_by_member_id === myMemberId) : (item.member_id === myMemberId);
                   
                   return (
-                    <div key={item.id} className="flex items-center gap-3 px-5 py-4 hover:bg-white/5 transition-colors group">
+                    <div 
+                      key={item.id} 
+                      onClick={() => setSelectedTransaction(item)}
+                      className="flex items-center gap-3 px-5 py-4 hover:bg-white/5 transition-colors group cursor-pointer"
+                    >
                       <div className={`p-2.5 rounded-xl flex-shrink-0 ${isExpense ? 'bg-red-500/10 text-red-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
                         {isExpense ? <TrendingDown size={15} /> : <DollarSign size={15} />}
                       </div>
@@ -664,7 +789,10 @@ export default function GroupRoom() {
                           </span>
                         </div>
                         <p className="text-xs text-muted">
-                          {isExpense ? item.category : (item.note || 'No note')} · {new Date(item.date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })}
+                          {isExpense 
+                            ? `${item.category} · Paid by ${memberProfiles[item.paid_by_member_id] || 'Member'}` 
+                            : `${item.note || 'No note'} · Added by ${memberProfiles[item.created_by] || 'Member'}`}
+                          {` · ${new Date(item.date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })}`}
                           {isExpense && item.is_split && (
                             <span className="ml-2 px-1.5 py-0.5 bg-white/5 text-muted rounded text-[10px] font-medium">Split</span>
                           )}
@@ -676,26 +804,35 @@ export default function GroupRoom() {
                         </span>
                         
                         {(isOwn || isManager) && isExpense && (
-                          <button
-                            onClick={() => handleDeleteExpense(item.id)}
-                            className="p-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-lg transition-all"
-                            title="Delete Expense"
-                          >
-                            <Trash2 size={13} />
-                          </button>
+                          <div className="flex gap-1 transition-all">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setEditExpenseId(item.id); setAmount(item.amount); setDescription(item.description); setCategory(item.category); setDate(item.date); setPaymentSource(item.payment_source); setShowModal(true); }}
+                              className="p-1.5 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg transition-all"
+                              title="Edit Expense"
+                            >
+                              <Edit2 size={13} />
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleDeleteExpense(item.id); }}
+                              className="p-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-lg transition-all"
+                              title="Delete Expense"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
                         )}
 
                         {!isExpense && isManager && (
                           <div className="flex gap-1 transition-all">
                             <button
-                              onClick={() => handleEditContribution(item)}
+                              onClick={(e) => { e.stopPropagation(); handleEditContribution(item); }}
                               className="p-1.5 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg transition-all"
                               title="Edit Contribution"
                             >
                               <Edit2 size={13} />
                             </button>
                             <button
-                              onClick={() => handleDeleteContribution(item.id)}
+                              onClick={(e) => { e.stopPropagation(); handleDeleteContribution(item.id); }}
                               className="p-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-lg transition-all"
                               title="Delete Contribution"
                             >
@@ -720,18 +857,38 @@ export default function GroupRoom() {
             personalPayments={personalPayments}
             memberProfiles={memberProfiles}
             fmt={fmt}
+            manualBalance={group?.manual_balance}
+            isManager={isManager}
+            onUpdateBalance={() => setShowUpdateBalanceModal(true)}
+            onAddBudget={() => setShowBudgetModal(true)}
           />
           <MemberBudgetPanel
             memberBalances={memberBalances}
             members={members}
             memberProfiles={memberProfiles}
             fmt={fmt}
+            isManager={isManager}
+            onUpdatePaid={(mId, paid) => {
+              setUpdatePaidData({ memberId: mId, memberName: memberProfiles[mId] || 'Member', currentPaid: paid });
+            }}
+            onCarryForward={(mId, amt) => {
+              const currentMonth = new Date().getMonth() + 1;
+              const currentYear = new Date().getFullYear();
+              setCarryForwardData({
+                memberId: mId,
+                memberName: memberProfiles[mId] || 'Member',
+                overpaidAmount: amt,
+                fromMonth: currentMonth,
+                fromYear: currentYear
+              });
+            }}
           />
           <BudgetHistory
             allBudgets={allBudgets}
             allContributions={contributions}
             allExpenses={expenses}
             allMemberBudgets={allMemberBudgets}
+            carryForwards={carryForwards}
             members={members}
             memberProfiles={memberProfiles}
             fmt={fmt}
@@ -760,7 +917,7 @@ export default function GroupRoom() {
                   disabled={inviteLoading}
                   className="w-full flex justify-center items-center gap-2 bg-primary text-white py-3 rounded-xl font-bold hover:bg-emerald-400 disabled:opacity-50 transition-colors"
                 >
-                  {inviteLoading ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <LinkIcon size={18} />}
+                  {inviteLoading ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Link2 size={18} />}
                   Generate Open Invite Link
                 </button>
               ) : (
@@ -869,7 +1026,18 @@ export default function GroupRoom() {
                     onChange={e => setCategory(e.target.value)}
                     className="w-full bg-background border border-white/10 rounded-xl px-4 py-3 text-text focus:outline-none focus:ring-2 focus:ring-primary/50 appearance-none"
                   >
-                    {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                    <optgroup label="Standard Categories">
+                      {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                    </optgroup>
+                    {groupDues && groupDues.filter(d => d.status !== 'Paid').length > 0 && (
+                      <optgroup label="Outstanding Group Bills">
+                        {groupDues.filter(d => d.status !== 'Paid').map(d => (
+                          <option key={`due-${d.id}`} value={d.category_name}>
+                            {d.category_name} (₹{d.remaining_amount} due)
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
                   </select>
                   {errors.category && <p className="text-red-500 text-[10px] mt-1 font-medium">{errors.category}</p>}
                 </div>
@@ -929,7 +1097,7 @@ export default function GroupRoom() {
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={() => setShowModal(false)} className="flex-1 py-3 rounded-xl border border-white/10 text-sm hover:bg-surface transition-colors">Cancel</button>
                 <button type="submit" disabled={formLoading} className="flex-1 py-3 rounded-xl bg-primary text-white text-sm font-semibold hover:bg-emerald-400 disabled:opacity-50 transition-colors">
-                  {formLoading ? 'Adding…' : 'Add Expense'}
+                  {formLoading ? (editExpenseId ? "Updating…" : "Adding…") : (editExpenseId ? "Update Expense" : "Add Expense")}
                 </button>
               </div>
             </form>
@@ -1007,7 +1175,7 @@ export default function GroupRoom() {
               <div className="h-px bg-white/5 w-full" />
               <div className="pt-2">
                 {group?.created_by !== user?.id ? (
-                  <button onClick={() => { setShowSettings(false); handleLeaveGroup(); }} className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-red-500/10 text-red-500 transition-colors"><LogOut size={18} /><span className="font-semibold">Exit Group</span></button>
+                  <button onClick={() => { setShowSettings(false); }} className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-red-500/10 text-red-500 transition-colors"><LogOut size={18} /><span className="font-semibold">Exit Group</span></button>
                 ) : (
                   <p className="text-xs text-center text-muted italic p-2">As the creator, you can't exit. Use Admin Panel to delete.</p>
                 )}
@@ -1026,6 +1194,7 @@ export default function GroupRoom() {
         groupId={groupId}
         members={members}
         memberProfiles={memberProfiles}
+        memberDues={memberDues}
         managerId={user.id}
         editItem={editContribution}
         onContributionAdded={fetchGroupData}
@@ -1045,6 +1214,8 @@ export default function GroupRoom() {
         onBudgetSaved={fetchGroupData}
       />
 
+
+
       <AddGuestModal
         isOpen={showGuestModal}
         onClose={() => setShowGuestModal(false)}
@@ -1052,6 +1223,42 @@ export default function GroupRoom() {
         onGuestAdded={fetchGroupData}
       />
 
+      <DeleteConfirmModal
+        isOpen={!!deleteConfirmType}
+        onClose={() => setDeleteConfirmType(null)}
+        onConfirm={confirmDelete}
+        isDeleting={isDeleting}
+        title={deleteConfirmType?.type === 'expense' ? 'Delete Expense?' : 'Delete Item?'}
+        message="This action cannot be undone."
+      />
+      {carryForwardData && (
+        <CarryForwardModal
+          isOpen={true}
+          onClose={() => setCarryForwardData(null)}
+          groupId={groupId}
+          memberId={carryForwardData.memberId}
+          memberName={carryForwardData.memberName}
+          overpaidAmount={carryForwardData.overpaidAmount}
+          fromMonth={carryForwardData.fromMonth}
+          fromYear={carryForwardData.fromYear}
+          onSuccess={fetchGroupData}
+        />
+      )}
+      
+      {updatePaidData && (
+        <UpdateMemberPaidModal
+          isOpen={true}
+          onClose={() => setUpdatePaidData(null)}
+          groupId={groupId}
+          memberId={updatePaidData.memberId}
+          memberName={updatePaidData.memberName}
+          currentPaid={updatePaidData.currentPaid}
+          month={globalViewMonth}
+          year={globalViewYear}
+          onSuccess={fetchGroupData}
+        />
+      )}
+      
       <UpdateBalanceModal
         isOpen={showUpdateBalanceModal}
         onClose={() => setShowUpdateBalanceModal(false)}
@@ -1059,7 +1266,48 @@ export default function GroupRoom() {
         currentBalance={group?.manual_balance}
         onUpdate={(newBal) => setGroup(prev => ({ ...prev, manual_balance: newBal }))}
       />
+
+      {showCreateDueModal && (
+        <CreateDueModal
+          isOpen={true}
+          onClose={() => setShowCreateDueModal(false)}
+          groupId={groupId}
+          month={globalViewMonth}
+          year={globalViewYear}
+          onSuccess={fetchGroupData}
+        />
+      )}
+
+      {showCreateMemberDueModal && (
+        <CreateMemberDueModal
+          isOpen={true}
+          onClose={() => setShowCreateMemberDueModal(false)}
+          groupId={groupId}
+          month={globalViewMonth}
+          year={globalViewYear}
+          members={members}
+          memberProfiles={memberProfiles}
+          onSuccess={() => fetchGroupData(false)}
+        />
+      )}
+
+      {editMemberDueItem && (
+        <UpdateMemberDueModal
+          isOpen={true}
+          onClose={() => setEditMemberDueItem(null)}
+          editItem={editMemberDueItem}
+          members={members}
+          memberProfiles={memberProfiles}
+          onSuccess={() => fetchGroupData(false)}
+        />
+      )}
+
+      <TransactionDetailsModal
+        isOpen={!!selectedTransaction}
+        onClose={() => setSelectedTransaction(null)}
+        item={selectedTransaction}
+        memberProfiles={memberProfiles}
+      />
     </div>
   );
 }
-

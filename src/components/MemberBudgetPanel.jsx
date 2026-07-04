@@ -1,17 +1,17 @@
 import { CheckCircle2, Clock, TrendingUp, AlertCircle, CreditCard } from 'lucide-react';
 
 const STATUS_CONFIG = {
-  settled:     { icon: CheckCircle2, color: 'emerald', label: 'Settled',     dot: '🟢' },
-  pending:     { icon: Clock,        color: 'amber',   label: 'Pending',     dot: '🟡' },
-  overpaid:    { icon: TrendingUp,   color: 'blue',    label: 'Overpaid',    dot: '🔵' },
-  outstanding: { icon: AlertCircle,  color: 'red',     label: 'Outstanding', dot: '🔴' },
-  no_target:   { icon: Clock,        color: 'zinc',    label: 'No Target',   dot: '⚪' },
+  settled:     { icon: CheckCircle2, color: 'emerald', label: 'Settled',            dot: '🟢' },
+  pending:     { icon: Clock,        color: 'amber',   label: 'Pending',            dot: '🟡' },
+  overpaid:    { icon: TrendingUp,   color: 'blue',    label: 'Extra Contribution', dot: '🔵' },
+  outstanding: { icon: AlertCircle,  color: 'red',     label: 'Outstanding',        dot: '🔴' },
+  no_target:   { icon: Clock,        color: 'zinc',    label: 'No Target',          dot: '⚪' },
 };
 
 /**
  * MemberBudgetPanel — Shows per-member contribution status and personal spending
  */
-export default function MemberBudgetPanel({ memberBalances, members, memberProfiles, fmt }) {
+export default function MemberBudgetPanel({ memberBalances, members, memberProfiles, fmt, onCarryForward, isManager, onUpdatePaid }) {
   if (!memberBalances || memberBalances.length === 0) return null;
 
   return (
@@ -29,7 +29,7 @@ export default function MemberBudgetPanel({ memberBalances, members, memberProfi
           const progressPct = bal.target > 0 ? Math.min((bal.paid / bal.target) * 100, 100) : 0;
           
           return (
-            <div key={bal.memberId} className="p-3 rounded-2xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.04] transition-colors">
+            <div key={bal.memberId} className="p-3 rounded-2xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.04] transition-colors relative group">
               {/* Header: Name + Status */}
               <div className="flex justify-between items-center mb-2">
                 <div className="flex items-center gap-2">
@@ -38,9 +38,20 @@ export default function MemberBudgetPanel({ memberBalances, members, memberProfi
                   </div>
                   <span className="text-sm font-semibold">{name}</span>
                 </div>
-                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold flex items-center gap-1 bg-${cfg.color}-500/10 text-${cfg.color}-400`}>
-                  <StatusIcon size={10} /> {cfg.label}
-                </span>
+                <div className="flex items-center gap-2">
+                  {isManager && onUpdatePaid && (
+                    <button 
+                      onClick={() => onUpdatePaid(bal.memberId, bal.paid)}
+                      className="p-1.5 bg-white/5 hover:bg-white/10 rounded-lg text-muted hover:text-white transition-colors"
+                      title="Update Member Payments"
+                    >
+                      <CreditCard size={12} />
+                    </button>
+                  )}
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold flex items-center gap-1 bg-${cfg.color}-500/10 text-${cfg.color}-400`}>
+                    <StatusIcon size={10} /> {cfg.label}
+                  </span>
+                </div>
               </div>
 
               {/* Progress Bar */}
@@ -66,17 +77,29 @@ export default function MemberBudgetPanel({ memberBalances, members, memberProfi
                 <div>
                   {bal.status === 'overpaid' ? (
                     <>
-                      <p className="text-[8px] text-blue-400 uppercase tracking-wider font-bold">Overpaid</p>
+                      <p className="text-[8px] text-blue-400 uppercase tracking-wider font-bold">Extra</p>
                       <p className="text-xs font-bold text-blue-400 mt-0.5">+{fmt(bal.overpaid)}</p>
                     </>
                   ) : (
                     <>
-                      <p className="text-[8px] text-muted uppercase tracking-wider font-bold">Pending</p>
+                      <p className="text-[8px] text-muted uppercase tracking-wider font-bold">Due</p>
                       <p className={`text-xs font-bold mt-0.5 ${bal.pending > 0 ? 'text-amber-400' : 'text-muted'}`}>{fmt(bal.pending)}</p>
                     </>
                   )}
                 </div>
               </div>
+
+              {/* Carry Forward Button */}
+              {bal.status === 'overpaid' && bal.overpaid > 0 && onCarryForward && (
+                <div className="mt-3">
+                  <button
+                    onClick={() => onCarryForward(bal.memberId, bal.overpaid)}
+                    className="w-full py-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-[10px] font-bold uppercase tracking-wider transition-colors border border-blue-500/20"
+                  >
+                    Carry Forward Surplus
+                  </button>
+                </div>
+              )}
 
               {/* Personal Spending */}
               {bal.personalSpending > 0 && (

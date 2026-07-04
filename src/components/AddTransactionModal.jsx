@@ -13,7 +13,7 @@ const DEFAULT_CATEGORIES = {
 
 const PAYMENT_METHODS = ['Cash', 'UPI', 'Credit Card', 'Debit Card', 'Bank Transfer', 'Mobile Wallet', 'Other'];
 
-export default function AddTransactionModal({ isOpen, onClose, transactionToEdit }) {
+export default function AddTransactionModal({ isOpen, onClose, transactionToEdit, onSaved }) {
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
   
@@ -85,6 +85,7 @@ export default function AddTransactionModal({ isOpen, onClose, transactionToEdit
         if (error) throw error;
         toast.success('Transaction added!');
       }
+      if (onSaved) onSaved(); // INSTANT UPDATE
       onClose();
     } catch (error) {
       toast.error(error.message);
