@@ -72,7 +72,7 @@ export default function AddGuestModal({ isOpen, onClose, groupId, onGuestAdded }
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
       <div className="glass w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden animate-fade-in border border-white/10">
         <div className="flex justify-between items-center p-5 border-b border-white/10 bg-white/[0.02]">
           <div>

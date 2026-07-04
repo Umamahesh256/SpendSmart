@@ -108,7 +108,7 @@ export default function AddContributionModal({ isOpen, onClose, groupId, members
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+        <form onSubmit={handleSubmit} className="p-5 pb-32 space-y-4 overflow-y-auto max-h-[75vh] custom-scrollbar">
           {/* Member Selection */}
           <div>
             <label className="block text-sm font-medium text-muted mb-1.5 flex items-center gap-2">

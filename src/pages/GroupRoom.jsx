@@ -593,7 +593,7 @@ export default function GroupRoom() {
 
 
   return (
-    <div className="space-y-4 animate-fade-in">
+    <div className="space-y-4">
       {/* ── Header ─────────────────────────────────────────── */}
       <div className="flex items-start gap-3 animate-slide-up">
         <button onClick={() => navigate(-1)} className="p-2 rounded-xl bg-surface hover:bg-white/10 transition-colors mt-0.5">
@@ -964,7 +964,7 @@ export default function GroupRoom() {
               <button onClick={() => setShowModal(false)} className="p-2 rounded-full hover:bg-white/10 text-muted transition-colors"><X size={20} /></button>
             </div>
             
-            <form onSubmit={handleAddExpense} className="p-5 overflow-y-auto custom-scrollbar flex-1 space-y-5">
+            <form onSubmit={handleAddExpense} className="p-5 pb-32 overflow-y-auto custom-scrollbar flex-1 space-y-5">
               <div>
                 <label className="block text-sm font-medium text-muted mb-1.5">Amount (₹) *</label>
                 <div className="relative">

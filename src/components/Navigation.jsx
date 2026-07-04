@@ -132,7 +132,7 @@ export default function Navigation() {
 
       {/* ─── MOBILE BOTTOM TAB BAR ─────────────────────────── */}
       {user && (
-        <nav className="fixed bottom-0 left-0 right-0 z-50 md:hidden pb-safe">
+        <nav className="fixed bottom-0 left-0 right-0 z-40 md:hidden pb-safe">
           <div className="glass border-t border-white/10 px-2">
             <div className="flex justify-around items-center h-16">
               {navLinks.map(({ to, label, icon: Icon, onClick }) => {
@@ -169,7 +169,7 @@ export default function Navigation() {
 
       {/* ─── GUEST TOP NAV (Desktop) ───────────────────────── */}
       {!user && (
-        <nav className="hidden md:flex items-center justify-between px-10 py-5 sticky top-0 z-50 glass">
+        <nav className="hidden md:flex items-center justify-between px-10 py-5 sticky top-0 z-40 glass">
           <Link to="/" className="text-2xl font-bold text-text flex items-center gap-3">
             <div className="bg-primary/10 p-2 rounded-xl text-primary">
               <PieChart size={28} strokeWidth={2.5} />
